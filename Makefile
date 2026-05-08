@@ -13,7 +13,7 @@ OBJS = src/pg_ext_memcheck.o \
        src/worker_harness.o
 
 # Name of the shared library to be built
-MODULE_big = pg_ext_memcheck 
+MODULE_big = pg_ext_memcheck
 
 # PGXS makefile
 PG_CONFIG = pg_config
