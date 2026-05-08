@@ -1,0 +1,4 @@
+comment = 'A PostgreSQL extension that instruments and stress-tests another extension memory behavior.'
+default_version = '0.0.1'
+module_pathname = '$libdir/pg_ext_memcheck'
+relocatable = true

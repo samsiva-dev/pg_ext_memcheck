@@ -1,0 +1,6 @@
+*.o
+*.ddl
+*.dylib
+*.so
+
+pg_ext_memcheck
