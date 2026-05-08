@@ -8,7 +8,6 @@
 extern void install_executor_hooks(void);
 extern void uninstall_executor_hooks(void);
 extern void memcheck_executor_start(QueryDesc *queryDesc, int eflags);
-extern void memcheck_executor_run(QueryDesc *queryDesc, ScanDirection direction, uint64 count, bool execute_once);
 extern void memcheck_executor_end(QueryDesc *queryDesc);
 
 #endif /* MEMCHECK_HOOKS_H */

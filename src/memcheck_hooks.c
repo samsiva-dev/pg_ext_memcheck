@@ -15,25 +15,28 @@
 #include "utils/elog.h"
 #include "executor/execdesc.h"
 #include "access/sdir.h"
+#include "utils/memutils.h"
+#include "utils/palloc.h"
 
 // Local Includes
 #include "include/pg_ext_memcheck.h"
 #include "include/gucs.h"
 #include "include/memcheck_hooks.h"
+#include "include/context_walker.h"
 
 // Executor Hooks
 static ExecutorStart_hook_type prev_executor_start_hook = NULL;
-static ExecutorRun_hook_type prev_executor_run_hook = NULL;
 static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
+
+// Global Static Variables for Memory Snapshots
+static CtxTree *before_snapshot = NULL;
+static CtxTree *after_snapshot = NULL;
 
 // Install and Uninstall Hooks
 void install_executor_hooks(void) {
     // Save previous hooks and install our hooks
     prev_executor_start_hook = ExecutorStart_hook;
     ExecutorStart_hook = memcheck_executor_start;
-
-    prev_executor_run_hook = ExecutorRun_hook;
-    ExecutorRun_hook = memcheck_executor_run;
 
     prev_executor_end_hook = ExecutorEnd_hook;
     ExecutorEnd_hook = memcheck_executor_end;
@@ -42,28 +45,37 @@ void install_executor_hooks(void) {
 void uninstall_executor_hooks(void) {
     // Restore previous hooks
     ExecutorStart_hook = prev_executor_start_hook;
-    ExecutorRun_hook = prev_executor_run_hook;
     ExecutorEnd_hook = prev_executor_end_hook;
 }
+
+/*
+    What need to be done in the hooks:
+    On ExecutorStart: 
+        if memcheck_mode == MEMCHECK_EXECUTOR and the query is not a memcheck internal query, take the before-snapshot.
+    On ExecutorEnd: 
+        if memcheck_mode == MEMCHECK_EXECUTOR and the query is not a memcheck internal query, take the after-snapshot, 
+        compare with before-snapshot and log any differences.
+*/
 
 // Memcheck Executor Start Hook Implementation
 void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
     // Call the previous hook if it exists
     if (prev_executor_start_hook)
         prev_executor_start_hook(queryDesc, eflags);
+    else {
+        // Call the core ExecutorStart if no previous hook exists
+        ExecutorStart(queryDesc, eflags); 
+    }
 
-    elog(INFO, "memcheck_executor_start called for query: %s", queryDesc->sourceText);
-}
+    // Skip memory checking if mode is NONE
+    if (memcheck_mode == MEMCHECK_NONE) {
+        return; 
+    }
 
-// Memcheck Executor Run Hook Implementation
-void memcheck_executor_run(
-    QueryDesc *queryDesc, ScanDirection direction, uint64 count, bool execute_once
-) {
-    // Call the previous hook if it exists
-    if (prev_executor_run_hook)
-        prev_executor_run_hook(queryDesc, direction, count, execute_once);
-    
-    elog(INFO, "memcheck_executor_run called for query: %s", queryDesc->sourceText);
+    if (memcheck_mode == MEMCHECK_EXECUTOR) {
+        // Take before-snapshot
+        before_snapshot = snapshot_context_tree(TopMemoryContext);
+    }
 }
 
 // Memcheck Executor End Hook Implementation
@@ -71,6 +83,31 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
     // Call the previous hook if it exists
     if (prev_executor_end_hook)
         prev_executor_end_hook(queryDesc);
+    else {
+        // Call the core ExecutorEnd if no previous hook exists
+        ExecutorEnd(queryDesc); 
+    }
     
-    elog(INFO, "memcheck_executor_end called for query: %s", queryDesc->sourceText);
+    // Skip memory checking if mode is NONE
+    if (memcheck_mode == MEMCHECK_NONE) {
+        return; 
+    }
+
+    if (memcheck_mode == MEMCHECK_EXECUTOR) {
+        // Take after-snapshot, compare with before-snapshot and log differences
+        after_snapshot = snapshot_context_tree(TopMemoryContext);
+        CtxDiff *diffs = diff_context_trees(before_snapshot, after_snapshot);
+        // Log the differences (for simplicity, we just print them)
+        for (int i = 0; i < after_snapshot->count; i++) {
+            CtxDiff diff = diffs[i];
+            elog(LOG, "Memory context '%s' (depth %d): beforeAllocated=%zu, afterAllocated=%zu, beforeFree=%zu, afterFree=%zu",
+                 diff.name, diff.depth, diff.beforeAllocated, diff.afterAllocated, diff.beforeFree, diff.afterFree);
+        }
+        // Free the snapshots and diffs
+        free_context_tree(before_snapshot);
+        free_context_tree(after_snapshot);
+        free_context_diff(diffs);
+        before_snapshot = NULL;
+        after_snapshot = NULL;
+    }
 }

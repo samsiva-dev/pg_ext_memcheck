@@ -1,0 +1,4 @@
+#ifndef VIOLATION_LOG_H
+#define VIOLATION_LOG_H
+
+#endif /* VIOLATION_LOG_H */
