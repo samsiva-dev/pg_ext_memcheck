@@ -4,3 +4,5 @@
 *.so
 
 pg_ext_memcheck
+
+.vscode/
