@@ -8,13 +8,18 @@
  *-------------------------------------------------------------------------
 */
 
+// Postgres Includes
 #include "postgres.h"
 #include "fmgr.h"
-
 #include "optimizer/planner.h"
 #include "executor/executor.h"
 #include "utils/elog.h"
 #include "storage/ipc.h"
+
+// Local Includes
+#include "include/pg_ext_memcheck.h"
+#include "include/gucs.h"
+#include "include/memcheck_hooks.h"
 
 void _PG_init(void);
 void _PG_fini(void);
@@ -23,11 +28,6 @@ PG_MODULE_MAGIC;
 
 // Required Hook Types and Variables
 // (Add any necessary hooks here, e.g., ExecutorStart_hook, ExecutorEnd_hook, etc.)
-
-static planner_hook_type prev_planner_hook = NULL;
-static ExecutorStart_hook_type prev_executor_start_hook = NULL;
-static ExecutorRun_hook_type prev_executor_run_hook = NULL;
-static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -42,8 +42,12 @@ _PG_init(void)
 {
     elog(INFO, "pg_ext_memcheck loaded");
 
+    // Define custom GUCs
+    DefineCustomGUCs();
+
     // Install hooks
     install_hooks();
+    install_executor_hooks();
 }
 
 // Extension unload callback
@@ -54,6 +58,7 @@ _PG_fini(void)
 
     // Uninstall hooks
     uninstall_hooks();
+    uninstall_executor_hooks();
 }
 
 /*
@@ -65,17 +70,6 @@ static void
 install_hooks(void)
 {
     // Save previous hooks and install our hooks
-    prev_planner_hook = planner_hook;
-    planner_hook = NULL;              // TODO: Set when defined
-
-    prev_executor_start_hook = ExecutorStart_hook;
-    ExecutorStart_hook = NULL;        // TODO: Set when defined
-
-    prev_executor_run_hook = ExecutorRun_hook;
-    ExecutorRun_hook = NULL;          // TODO: Set when defined
-
-    prev_executor_end_hook = ExecutorEnd_hook;
-    ExecutorEnd_hook = NULL;          // TODO: Set when defined
 
     prev_emit_log_hook = emit_log_hook;
     emit_log_hook = NULL;            // TODO: Set when defined
@@ -92,10 +86,6 @@ static void
 uninstall_hooks(void)
 {
     // Restore previous hooks
-    planner_hook = prev_planner_hook;
-    ExecutorStart_hook = prev_executor_start_hook;
-    ExecutorRun_hook = prev_executor_run_hook;
-    ExecutorEnd_hook = prev_executor_end_hook;
     emit_log_hook = prev_emit_log_hook;
     shmem_startup_hook = prev_shmem_startup_hook;
 }
