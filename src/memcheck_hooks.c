@@ -8,6 +8,21 @@
  *-------------------------------------------------------------------------
 */
 
+/*
+    memcheck_hooks.c
+    
+    This file contains the implementation of the hooks for the pg_ext_memcheck extension.
+    These hooks are used to monitor memory usage during query execution and log any
+    detected memory leaks or anomalies to a shared violation log.
+    
+    The main hooks implemented here are:
+    - ExecutorStart_hook: Takes a snapshot of the memory context tree before query execution.
+    - ExecutorEnd_hook: Takes another snapshot after query execution, compares it with the before-snapshot,
+      and logs any differences as violations in the shared violation log.
+    
+    The hooks respect the configured memcheck_mode and only perform monitoring when appropriate.
+*/
+
 // Postgres Includes
 #include "postgres.h"
 #include "fmgr.h"
@@ -23,14 +38,63 @@
 #include "include/gucs.h"
 #include "include/memcheck_hooks.h"
 #include "include/context_walker.h"
+#include "include/violation_log.h"
 
 // Executor Hooks
 static ExecutorStart_hook_type prev_executor_start_hook = NULL;
 static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
 
-// Global Static Variables for Memory Snapshots
+/* Before-snapshot for the current (non-internal) query. */
 static CtxTree *before_snapshot = NULL;
-static CtxTree *after_snapshot = NULL;
+
+bool memcheck_in_internal_query = false;
+
+/*
+ * analyze_and_log_diff
+ *
+ * Inspects a single CtxDiff entry, determines the severity of any memory
+ * growth, and writes a ViolationEntry to the shared violation_log ring buffer.
+ *
+ * Severity thresholds (based on bytes allocated since before-snapshot):
+ *   ERROR   : growth > 1 MiB  — likely a large leak or runaway allocation
+ *   WARNING : growth > 64 KiB — moderate allocation retained across the query
+ *   INFO    : any positive growth — small but noteworthy retained allocation
+ *
+ * Contexts whose allocated size did not increase are silently skipped.
+ */
+static void
+analyze_and_log_diff(CtxDiff *diff)
+{
+    Size        delta_allocated;
+    const char *severity;
+    char        detail[256];
+
+    /* Only report contexts where allocated memory grew after the query */
+    if (diff->afterAllocated <= diff->beforeAllocated)
+        return;
+
+    delta_allocated = diff->afterAllocated - diff->beforeAllocated;
+
+    if (delta_allocated > (Size)(1 * 1024 * 1024))        /* > 1 MiB */
+        severity = "ERROR";
+    else if (delta_allocated > (Size)(64 * 1024))          /* > 64 KiB */
+        severity = "WARNING";
+    else if (delta_allocated >= (Size) memcheck_min_leak_bytes)
+        severity = "INFO";
+    else
+        return; /* below the configured threshold, skip silently */
+
+    snprintf(detail, sizeof(detail),
+             "context '%s' (depth %d): allocated grew by %zu bytes "
+             "(before=%zu after=%zu); free before=%zu after=%zu",
+             diff->name, diff->depth,
+             delta_allocated,
+             diff->beforeAllocated, diff->afterAllocated,
+             diff->beforeFree, diff->afterFree);
+
+    // Finally, write the violation to the shared log
+    violation_log_write("context_leak", severity, detail);
+}
 
 // Install and Uninstall Hooks
 void install_executor_hooks(void) {
@@ -72,10 +136,10 @@ void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
         return; 
     }
 
-    if (memcheck_mode == MEMCHECK_EXECUTOR) {
-        // Take before-snapshot
+    // For EXECUTOR mode, take a before-snapshot of the context tree 
+    // at the start of the query execution.
+    if (memcheck_mode == MEMCHECK_EXECUTOR && !memcheck_in_internal_query)
         before_snapshot = snapshot_context_tree(TopMemoryContext);
-    }
 }
 
 // Memcheck Executor End Hook Implementation
@@ -93,27 +157,25 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         return; 
     }
 
-    if (memcheck_mode == MEMCHECK_EXECUTOR) {
+    // For EXECUTOR mode, take an after-snapshot of the context tree at the end of the query execution,
+    // compare it with the before-snapshot, and log any differences as violations.
+    if (memcheck_mode == MEMCHECK_EXECUTOR && !memcheck_in_internal_query &&
+        before_snapshot != NULL)
+    {
         int      diff_count = 0;
         CtxDiff *diffs      = NULL;
+        CtxTree *after      = snapshot_context_tree(TopMemoryContext);
 
-        // Take after-snapshot, compare with before-snapshot and log differences
-        after_snapshot = snapshot_context_tree(TopMemoryContext);
-        diffs = diff_context_trees(before_snapshot, after_snapshot, &diff_count);
+        // Compute the differences between before and after snapshots
+        diffs = diff_context_trees(before_snapshot, after, &diff_count);
 
-        // Log the differences — iterate diff_count, not after_snapshot->count;
-        // the diff array only contains matched contexts and may be shorter.
-        for (int i = 0; i < diff_count; i++) {
-            CtxDiff *diff = &diffs[i];
-            elog(LOG, "Memory context '%s' (depth %d): beforeAllocated=%zu, afterAllocated=%zu, beforeFree=%zu, afterFree=%zu",
-                 diff->name, diff->depth, diff->beforeAllocated, diff->afterAllocated, diff->beforeFree, diff->afterFree);
-        }
+        /* Analyze each diff entry and write qualifying violations to shared memory */
+        for (int i = 0; i < diff_count; i++)
+            analyze_and_log_diff(&diffs[i]);
 
-        // Free the snapshots and diffs
         free_context_tree(before_snapshot);
-        free_context_tree(after_snapshot);
+        free_context_tree(after);
         free_context_diff(diffs);
         before_snapshot = NULL;
-        after_snapshot  = NULL;
     }
 }

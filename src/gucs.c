@@ -25,8 +25,9 @@
 // Local Includes
 #include "include/gucs.h"
 
-// GUC variable definition
-MemCheckMode memcheck_mode = MEMCHECK_ALL;
+// GUC variable definitions
+MemCheckMode memcheck_mode      = MEMCHECK_ALL;
+int          memcheck_min_leak_bytes = 8192; /* 8 KiB default */
 
 static const struct config_enum_entry memcheck_mode_options[] = {
     {"all",      MEMCHECK_ALL,      false},
@@ -52,5 +53,16 @@ DefineCustomGUCs(void)
                              NULL,         // assign hook
                              NULL);        // show hook
 
-    // Define other GUCs as needed (e.g., boolean and string GUCs)
+    // Minimum allocation growth (in bytes) required to log an INFO violation.
+    // Contexts that grow by less than this amount are silently ignored.
+    DefineCustomIntVariable("pg_ext_memcheck.min_leak_bytes",
+                            "Minimum allocation growth in bytes to log as an INFO violation.",
+                            "Contexts growing by less than this value are silently skipped. Default is 8192 (8 KiB).",
+                            &memcheck_min_leak_bytes,
+                            8192,       /* default: 8 KiB */
+                            0,          /* min */
+                            INT_MAX,    /* max */
+                            PGC_USERSET,
+                            GUC_UNIT_BYTE,
+                            NULL, NULL, NULL);
 }
