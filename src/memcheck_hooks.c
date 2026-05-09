@@ -64,7 +64,7 @@ void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
         prev_executor_start_hook(queryDesc, eflags);
     else {
         // Call the core ExecutorStart if no previous hook exists
-        ExecutorStart(queryDesc, eflags); 
+        standard_ExecutorStart(queryDesc, eflags); 
     }
 
     // Skip memory checking if mode is NONE
@@ -85,7 +85,7 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         prev_executor_end_hook(queryDesc);
     else {
         // Call the core ExecutorEnd if no previous hook exists
-        ExecutorEnd(queryDesc); 
+        standard_ExecutorEnd(queryDesc); 
     }
     
     // Skip memory checking if mode is NONE
@@ -94,20 +94,26 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
     }
 
     if (memcheck_mode == MEMCHECK_EXECUTOR) {
+        int      diff_count = 0;
+        CtxDiff *diffs      = NULL;
+
         // Take after-snapshot, compare with before-snapshot and log differences
         after_snapshot = snapshot_context_tree(TopMemoryContext);
-        CtxDiff *diffs = diff_context_trees(before_snapshot, after_snapshot);
-        // Log the differences (for simplicity, we just print them)
-        for (int i = 0; i < after_snapshot->count; i++) {
-            CtxDiff diff = diffs[i];
+        diffs = diff_context_trees(before_snapshot, after_snapshot, &diff_count);
+
+        // Log the differences — iterate diff_count, not after_snapshot->count;
+        // the diff array only contains matched contexts and may be shorter.
+        for (int i = 0; i < diff_count; i++) {
+            CtxDiff *d = &diffs[i];
             elog(LOG, "Memory context '%s' (depth %d): beforeAllocated=%zu, afterAllocated=%zu, beforeFree=%zu, afterFree=%zu",
-                 diff.name, diff.depth, diff.beforeAllocated, diff.afterAllocated, diff.beforeFree, diff.afterFree);
+                 d->name, d->depth, d->beforeAllocated, d->afterAllocated, d->beforeFree, d->afterFree);
         }
+
         // Free the snapshots and diffs
         free_context_tree(before_snapshot);
         free_context_tree(after_snapshot);
         free_context_diff(diffs);
         before_snapshot = NULL;
-        after_snapshot = NULL;
+        after_snapshot  = NULL;
     }
 }

@@ -18,15 +18,81 @@
 #include "include/gucs.h"
 #include "include/context_walker.h"
 
-// Get CtxSnapshot for the Passed MemoryContext
-static CtxSnapshot get_context_snapshot(MemoryContext context, int depth, Oid parentHash) {
-    CtxSnapshot snapshot;
+/*
+ * Stable identity hash for a context node: djb2 over the name XOR'd with
+ * depth.  Used as parentHash so the diff can distinguish same-named contexts
+ * that live at different levels of the tree.
+ */
+static Oid
+hash_name_depth(const char *name, int depth)
+{
+    uint32      h = 5381;
+    const char *p;
+
+    for (p = name; *p; p++)
+        h = ((h << 5) + h) ^ (unsigned char) *p;
+    h = h * 31 ^ (uint32) depth;
+    return (Oid) h;
+}
+
+/* Grow tree->entries by doubling, handling the initial NULL case. */
+static void
+tree_ensure_capacity(CtxTree *tree)
+{
+    if (tree->count < tree->capacity)
+        return;
+
+    tree->capacity = (tree->capacity == 0) ? 16 : tree->capacity * 2;
+    if (tree->entries == NULL)
+        tree->entries = (CtxSnapshot *) palloc(sizeof(CtxSnapshot) * tree->capacity);
+    else
+        tree->entries = (CtxSnapshot *) repalloc(tree->entries, sizeof(CtxSnapshot) * tree->capacity);
+}
+
+/*
+ * Get CtxSnapshot for the passed MemoryContext.
+ *
+ * Use the stats() method with MemoryContextCounters to obtain totalspace and
+ * freespace for the whole context.  get_chunk_space() takes a single chunk
+ * pointer — not a MemoryContext — so passing `context` to it is both a type
+ * error and a segfault.
+ */
+static CtxSnapshot
+get_context_snapshot(MemoryContext context, int depth, Oid parentHash)
+{
+    CtxSnapshot             snapshot;
+    MemoryContextCounters   counters;
+
     snprintf(snapshot.name, NAMEDATALEN, "%s", context->name);
-    snapshot.totalAllocated = context->mem_allocated;
-    snapshot.totalFree = context->mem_allocated - context->methods->get_chunk_space(context);
-    snapshot.depth = depth;
-    snapshot.parentHash = parentHash;
+
+    memset(&counters, 0, sizeof(counters));
+    (*context->methods->stats)(context, NULL, NULL, &counters, false);
+
+    snapshot.totalAllocated = counters.totalspace;
+    snapshot.totalFree      = counters.freespace;
+    snapshot.depth          = depth;
+    snapshot.parentHash     = parentHash;
     return snapshot;
+}
+
+/*
+ * Recursive helper: record ctx at the given depth, then descend into every
+ * child.  Using a dedicated helper (rather than a while loop that recurses
+ * into firstchild) ensures depth and parentHash are computed correctly at
+ * every level of the tree.
+ */
+static void
+walk_context_tree(MemoryContext ctx, int depth, Oid parentHash, CtxTree *tree)
+{
+    CtxSnapshot  snapshot = get_context_snapshot(ctx, depth, parentHash);
+    Oid          myHash   = hash_name_depth(snapshot.name, depth);
+    MemoryContext child;
+
+    tree_ensure_capacity(tree);
+    tree->entries[tree->count++] = snapshot;
+
+    for (child = ctx->firstchild; child != NULL; child = child->nextchild)
+        walk_context_tree(child, depth + 1, myHash, tree);
 }
 
 /*
@@ -37,107 +103,99 @@ static CtxSnapshot get_context_snapshot(MemoryContext context, int depth, Oid pa
     Returns:
         - CtxTree*: A pointer to a CtxTree structure containing the snapshot of the memory context tree.
 */
-CtxTree* snapshot_context_tree(MemoryContext root) {
-    CtxTree *tree = (CtxTree *) palloc(sizeof(CtxTree));
-    tree->entries = NULL;
-    tree->count = 0;
-    tree->capacity = 0;
+CtxTree *
+snapshot_context_tree(MemoryContext root)
+{
+    CtxTree *tree = (CtxTree *) palloc0(sizeof(CtxTree));
 
-    while (root != NULL) {
-        Oid parentHash = 0; // For simplicity, we can compute a hash based on the context name and depth
-        CtxSnapshot snapshot = get_context_snapshot(root, 0, parentHash);
+    if (root != NULL)
+        walk_context_tree(root, 0, 0, tree);
 
-        if (root->firstchild != NULL) {
-            // Recursively snapshot child contexts
-            CtxTree *childTree = snapshot_context_tree(root->firstchild);
-            for (int i = 0; i < childTree->count; i++) {
-                CtxSnapshot childSnapshot = childTree->entries[i];
-                childSnapshot.depth += 1; // Increment depth for child contexts
-                childSnapshot.parentHash = parentHash; // Set parent hash for diffing
-                // Add child snapshot to the main tree
-                if (tree->count >= tree->capacity) {
-                    tree->capacity = (tree->capacity == 0) ? 4 : tree->capacity * 2;
-                    tree->entries = (CtxSnapshot *) repalloc(tree->entries, sizeof(CtxSnapshot) * tree->capacity);
-                }
-                tree->entries[tree->count++] = childSnapshot;
-            }
-            pfree(childTree);
-        }
-
-        // Add the current context snapshot to the tree
-        if (tree->count >= tree->capacity) {
-            tree->capacity = (tree->capacity == 0) ? 4 : tree->capacity * 2;
-            tree->entries = (CtxSnapshot *) repalloc(tree->entries, sizeof(CtxSnapshot) * tree->capacity);
-        }
-        tree->entries[tree->count++] = snapshot;
-    }
-    
     return tree;
 }
 
 /*
     Function: diff_context_trees
-    Description: Compares two CtxTree snapshots and returns an array of CtxDiff structures representing the differences.
+    Description: Compares two CtxTree snapshots and returns an array of CtxDiff structures
+                 representing contexts present in both snapshots.  Only matched contexts are
+                 included; *diff_count is set to the number of valid entries returned.
+                 Returns NULL (with *diff_count = 0) when nothing matched.
     Parameters:
-        - CtxTree *before: The snapshot of the memory context tree before the operation.
-        - CtxTree *after: The snapshot of the memory context tree after the operation.
+        - CtxTree *before:    snapshot before the operation.
+        - CtxTree *after:     snapshot after the operation.
+        - int     *diff_count: out-parameter; set to the number of entries in the returned array.
     Returns:
-        - CtxDiff*: A pointer to an array of CtxDiff structures representing the differences between the two snapshots.
+        - CtxDiff*: palloc'd array of diff entries, or NULL if there were no matches.
 */
-CtxDiff* diff_context_trees(CtxTree *before, CtxTree *after) {
-    // For simplicity, we can use a hash map to store the before snapshot for quick lookup
-    // In a real implementation, we would need to handle hash collisions and ensure unique identification of contexts
-    CtxDiff *diffs = NULL;
-    int diffCount = 0;
-    int diffCapacity = 0;
+CtxDiff *
+diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
+{
+    CtxDiff    *diffs    = NULL;
+    int         count    = 0;
+    int         capacity = 0;
 
-    for (int i = 0; i < after->count; i++) {
-        CtxSnapshot afterSnapshot = after->entries[i];
-        CtxSnapshot *beforeSnapshot = NULL;
+    Assert(before != NULL);
+    Assert(after  != NULL);
+    Assert(diff_count != NULL);
 
-        // Find the corresponding snapshot in the before tree using parentHash and name
-        for (int j = 0; j < before->count; j++) {
-            if (strcmp(before->entries[j].name, afterSnapshot.name) == 0 &&
-                before->entries[j].depth == afterSnapshot.depth &&
-                before->entries[j].parentHash == afterSnapshot.parentHash) {
-                beforeSnapshot = &before->entries[j];
+    for (int i = 0; i < after->count; i++)
+    {
+        CtxSnapshot *as = &after->entries[i];
+        CtxSnapshot *bs = NULL;
+
+        /* Match by name + depth + parentHash for stable identity. */
+        for (int j = 0; j < before->count; j++)
+        {
+            CtxSnapshot *b = &before->entries[j];
+
+            if (b->depth       == as->depth       &&
+                b->parentHash  == as->parentHash   &&
+                strcmp(b->name, as->name) == 0)
+            {
+                bs = b;
                 break;
             }
         }
 
-        if (beforeSnapshot != NULL) {
-            // Create a diff entry
-            CtxDiff diff;
-            snprintf(diff.name, NAMEDATALEN, "%s", afterSnapshot.name);
-            diff.beforeAllocated = beforeSnapshot->totalAllocated;
-            diff.afterAllocated = afterSnapshot.totalAllocated;
-            diff.beforeFree = beforeSnapshot->totalFree;
-            diff.afterFree = afterSnapshot.totalFree;
-            diff.depth = afterSnapshot.depth;
+        if (bs == NULL)
+            continue;   /* new context — not in before; skip for diff */
 
-            // Add the diff entry to the diffs array
-            if (diffCount >= diffCapacity) {
-                diffCapacity = (diffCapacity == 0) ? 4 : diffCapacity * 2;
-                diffs = (CtxDiff *) repalloc(diffs, sizeof(CtxDiff) * diffCapacity);
-            }
-            diffs[diffCount++] = diff;
+        if (count >= capacity)
+        {
+            capacity = (capacity == 0) ? 16 : capacity * 2;
+            if (diffs == NULL)
+                diffs = (CtxDiff *) palloc(sizeof(CtxDiff) * capacity);
+            else
+                diffs = (CtxDiff *) repalloc(diffs, sizeof(CtxDiff) * capacity);
         }
+
+        CtxDiff *d = &diffs[count++];
+        snprintf(d->name, NAMEDATALEN, "%s", as->name);
+        d->beforeAllocated = bs->totalAllocated;
+        d->afterAllocated  = as->totalAllocated;
+        d->beforeFree      = bs->totalFree;
+        d->afterFree       = as->totalFree;
+        d->depth           = as->depth;
     }
 
+    *diff_count = count;
     return diffs;
 }
 
-void free_context_tree(CtxTree *tree) {
-    if (tree != NULL) {
-        if (tree->entries != NULL) {
+void
+free_context_tree(CtxTree *tree)
+{
+    if (tree != NULL)
+    {
+        if (tree->entries != NULL)
             pfree(tree->entries);
-        }
         pfree(tree);
     }
 }
 
-void free_context_diff(CtxDiff *diff) {
-    if (diff != NULL) {
+void
+free_context_diff(CtxDiff *diff)
+{
+    if (diff != NULL)
         pfree(diff);
-    }
 }

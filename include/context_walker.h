@@ -30,7 +30,7 @@ typedef struct CtxDiff {
 } CtxDiff;
 
 extern CtxTree* snapshot_context_tree(MemoryContext root);
-extern CtxDiff* diff_context_trees(CtxTree *before, CtxTree *after);
+extern CtxDiff* diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count);
 extern void free_context_tree(CtxTree *tree);
 extern void free_context_diff(CtxDiff *diff);
 
