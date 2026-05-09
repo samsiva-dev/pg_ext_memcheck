@@ -5,8 +5,11 @@
 #include "fmgr.h"
 #include "executor/executor.h"
 
+// Executor Hooks
 extern void install_executor_hooks(void);
 extern void uninstall_executor_hooks(void);
+
+// Hook implementations functions
 extern void memcheck_executor_start(QueryDesc *queryDesc, int eflags);
 extern void memcheck_executor_end(QueryDesc *queryDesc);
 

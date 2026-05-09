@@ -43,19 +43,21 @@ tree_ensure_capacity(CtxTree *tree)
         return;
 
     tree->capacity = (tree->capacity == 0) ? 16 : tree->capacity * 2;
-    if (tree->entries == NULL)
+    if (tree->entries == NULL) {
+        // if entries is NULL, allocate new memory
         tree->entries = (CtxSnapshot *) palloc(sizeof(CtxSnapshot) * tree->capacity);
-    else
+    }
+    else {
+        // if entries already has allocated memory, reallocate to grow
         tree->entries = (CtxSnapshot *) repalloc(tree->entries, sizeof(CtxSnapshot) * tree->capacity);
+    }
 }
 
 /*
  * Get CtxSnapshot for the passed MemoryContext.
  *
  * Use the stats() method with MemoryContextCounters to obtain totalspace and
- * freespace for the whole context.  get_chunk_space() takes a single chunk
- * pointer — not a MemoryContext — so passing `context` to it is both a type
- * error and a segfault.
+ * freespace for the whole context.  
  */
 static CtxSnapshot
 get_context_snapshot(MemoryContext context, int depth, Oid parentHash)
@@ -133,32 +135,46 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
     CtxDiff    *diffs    = NULL;
     int         count    = 0;
     int         capacity = 0;
+    bool       *before_matched = NULL;
 
     Assert(before != NULL);
     Assert(after  != NULL);
     Assert(diff_count != NULL);
 
+    /* Track which before-entries have already been paired so that duplicate
+     * (name, depth, parentHash) siblings — e.g. the many 'index info' or
+     * 'dynahash' contexts — are each consumed at most once. */
+    if (before->count > 0)
+    {
+        before_matched = (bool *) palloc0(sizeof(bool) * before->count);
+    }
+
     for (int i = 0; i < after->count; i++)
     {
-        CtxSnapshot *as = &after->entries[i];
-        CtxSnapshot *bs = NULL;
+        CtxSnapshot *after_snapshot = &after->entries[i];
+        CtxSnapshot *before_snapshot = NULL;
+        int          matched_j = -1;
 
         /* Match by name + depth + parentHash for stable identity. */
         for (int j = 0; j < before->count; j++)
         {
             CtxSnapshot *b = &before->entries[j];
 
-            if (b->depth       == as->depth       &&
-                b->parentHash  == as->parentHash   &&
-                strcmp(b->name, as->name) == 0)
+            if (!before_matched[j]                             &&
+                b->depth       == after_snapshot->depth        &&
+                b->parentHash  == after_snapshot->parentHash   &&
+                strcmp(b->name, after_snapshot->name) == 0)
             {
-                bs = b;
+                before_snapshot = b;
+                matched_j = j;
                 break;
             }
         }
 
-        if (bs == NULL)
+        if (before_snapshot == NULL)
             continue;   /* new context — not in before; skip for diff */
+
+        before_matched[matched_j] = true;
 
         if (count >= capacity)
         {
@@ -169,14 +185,17 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
                 diffs = (CtxDiff *) repalloc(diffs, sizeof(CtxDiff) * capacity);
         }
 
-        CtxDiff *d = &diffs[count++];
-        snprintf(d->name, NAMEDATALEN, "%s", as->name);
-        d->beforeAllocated = bs->totalAllocated;
-        d->afterAllocated  = as->totalAllocated;
-        d->beforeFree      = bs->totalFree;
-        d->afterFree       = as->totalFree;
-        d->depth           = as->depth;
+        CtxDiff *diff = &diffs[count++];
+        snprintf(diff->name, NAMEDATALEN, "%s", after_snapshot->name);
+        diff->beforeAllocated = before_snapshot->totalAllocated;
+        diff->afterAllocated  = after_snapshot->totalAllocated;
+        diff->beforeFree      = before_snapshot->totalFree;
+        diff->afterFree       = after_snapshot->totalFree;
+        diff->depth           = after_snapshot->depth;
     }
+
+    if (before_matched != NULL)
+        pfree(before_matched);
 
     *diff_count = count;
     return diffs;

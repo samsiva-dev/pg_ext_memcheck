@@ -104,9 +104,9 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         // Log the differences — iterate diff_count, not after_snapshot->count;
         // the diff array only contains matched contexts and may be shorter.
         for (int i = 0; i < diff_count; i++) {
-            CtxDiff *d = &diffs[i];
+            CtxDiff *diff = &diffs[i];
             elog(LOG, "Memory context '%s' (depth %d): beforeAllocated=%zu, afterAllocated=%zu, beforeFree=%zu, afterFree=%zu",
-                 d->name, d->depth, d->beforeAllocated, d->afterAllocated, d->beforeFree, d->afterFree);
+                 diff->name, diff->depth, diff->beforeAllocated, diff->afterAllocated, diff->beforeFree, diff->afterFree);
         }
 
         // Free the snapshots and diffs

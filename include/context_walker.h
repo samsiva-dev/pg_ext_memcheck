@@ -6,6 +6,7 @@
 #include "c.h"
 #include "postgres_ext.h"
 
+// Context Snapshot Structure   
 typedef struct CtxSnapshot {
     char   name[NAMEDATALEN];
     Size   totalAllocated;
@@ -14,12 +15,14 @@ typedef struct CtxSnapshot {
     Oid    parentHash;      /* hash of parent name+depth for diff */
 } CtxSnapshot;
 
+// Context Tree Structure
 typedef struct CtxTree {
     CtxSnapshot *entries;
     int          count;
     int          capacity;
 } CtxTree;
 
+// Context Diff Structure
 typedef struct CtxDiff {
     char   name[NAMEDATALEN];
     Size   beforeAllocated;
