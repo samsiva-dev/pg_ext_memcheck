@@ -1,0 +1,109 @@
+---
+title: Quickstart
+description: Install pg_ext_memcheck and run your first memory check in under five minutes.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Development software">
+  pg_ext_memcheck is **not production-safe**. Use it only in development and CI environments.
+</Aside>
+
+## Prerequisites
+
+- PostgreSQL 14 or later (server headers required)
+- `pg_config` in your `PATH`
+- A C compiler (`gcc` or `clang`)
+
+## Installation
+
+<Steps>
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/samsiva-dev/pg_ext_memcheck.git
+   cd pg_ext_memcheck
+   ```
+
+2. **Build and install**
+
+   ```bash
+   make
+   sudo make install
+   ```
+
+   This uses PGXS to build against your installed PostgreSQL headers and places the extension files in the correct `$libdir`.
+
+3. **Configure `postgresql.conf`**
+
+   Add the extension to the preloaded libraries so the background worker and hooks are registered at startup:
+
+   ```ini
+   # postgresql.conf
+   shared_preload_libraries = 'pg_ext_memcheck'
+   ```
+
+   Restart PostgreSQL after making this change.
+
+4. **Create the extension**
+
+   ```sql
+   CREATE EXTENSION pg_ext_memcheck;
+   ```
+
+</Steps>
+
+## Your first check
+
+Test a simple function from any extension you are developing:
+
+```sql
+-- Start a check window around a single query
+SELECT memcheck.begin();
+
+-- Call the function you want to inspect
+SELECT your_extension.some_function('input');
+
+SELECT memcheck.end();
+
+-- Flush any violations detected during the window to the log table
+SELECT * FROM ext_memcheck.flush_violations();
+```
+
+If `flush_violations()` returns zero rows, no leaks or wrong-context allocations were detected for that invocation.
+
+A violation row looks like this:
+
+| Column | Example |
+|---|---|
+| `violation_type` | `context_leak` |
+| `context_name` | `"MyExtensionQueryCtx"` |
+| `detail` | `"Context present in post-query snapshot but not pre-query"` |
+| `query` | `"SELECT your_extension.some_function('input')"` |
+| `detected_at` | `2026-05-10 14:32:01 UTC` |
+
+## Run a built-in stress scenario
+
+```sql
+-- Run the context reset storm scenario against your function
+SELECT memcheck.run_scenario(
+  'context_reset_storm',
+  target => 'your_extension.some_function',
+  iterations => 100
+);
+
+SELECT * FROM ext_memcheck.flush_violations();
+```
+
+<Aside type="note" title="Phase 2 feature">
+  `memcheck.run_scenario()` and the full stress scenario catalog are Phase 2 features currently in development. See the [Roadmap](/roadmap/) for status.
+</Aside>
+
+## GUC parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `pg_ext_memcheck.enabled` | `on` | Master switch. Set to `off` to disable all instrumentation. |
+| `pg_ext_memcheck.log_size` | `1024` | Violation ring buffer capacity (number of entries). |
+| `pg_ext_memcheck.strict_contexts` | `off` | Treat wrong-context allocations as errors rather than warnings. |

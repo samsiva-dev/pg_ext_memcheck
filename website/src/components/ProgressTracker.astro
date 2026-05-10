@@ -1,0 +1,93 @@
+---
+interface Task {
+  label: string;
+  status: 'done' | 'wip' | 'todo';
+}
+
+interface Phase {
+  name: string;
+  badge: 'active' | 'planned';
+  tasks: Task[];
+}
+
+const phases: Phase[] = [
+  {
+    name: 'Phase 1 — MVP',
+    badge: 'active',
+    tasks: [
+      { label: 'MemoryContext tree snapshot engine (context_walker)', status: 'done' },
+      { label: 'Snapshot diff algorithm (context leak detection)', status: 'done' },
+      { label: 'Executor hooks (ExecutorStart / ExecutorEnd)', status: 'done' },
+      { label: 'Shared ring-buffer violation log (LWLock-protected)', status: 'done' },
+      { label: 'GUC parameters (gucs.c)', status: 'done' },
+      { label: 'ext_memcheck.flush_violations() SQL function', status: 'done' },
+      { label: 'Wrong-context allocation detection', status: 'wip' },
+      { label: 'memcheck.begin() / memcheck.end() session API', status: 'wip' },
+      { label: 'memcheck.run_scenario() stress runner', status: 'wip' },
+      { label: 'Regression test suite (pgTAP)', status: 'todo' },
+      { label: 'Named context matching (stable across restarts)', status: 'todo' },
+    ],
+  },
+  {
+    name: 'Phase 2 — Extended Probes',
+    badge: 'planned',
+    tasks: [
+      { label: 'Shmem boundary sentinel probe (shmem_probe.c)', status: 'todo' },
+      { label: 'DSM segment lifecycle tracking (dsm_tracker.c)', status: 'todo' },
+      { label: 'BGWorker crash isolation harness (worker_harness.c)', status: 'todo' },
+      { label: 'Use-after-reset simulation', status: 'todo' },
+      { label: 'Monotonic context growth / bloat measurement', status: 'todo' },
+      { label: 'Concurrent-backend stress scenario', status: 'todo' },
+      { label: 'context_reset_storm scenario', status: 'todo' },
+      { label: 'tx_abort_loop scenario', status: 'todo' },
+      { label: 'growth_benchmark scenario', status: 'todo' },
+    ],
+  },
+];
+
+function pct(tasks: Task[]) {
+  const done = tasks.filter(t => t.status === 'done').length;
+  return Math.round((done / tasks.length) * 100);
+}
+
+const icons = { done: '✅', wip: '🔧', todo: '⬜' } as const;
+---
+
+<div class="progress-tracker">
+  {phases.map(phase => {
+    const p = pct(phase.tasks);
+    const barClass = phase.badge === 'active' ? 'bar-green' : 'bar-blue';
+    const badgeClass = phase.badge === 'active' ? 'badge-active' : 'badge-planned';
+
+    return (
+      <div class="phase-block">
+        <div class="phase-header">
+          <h3 class="phase-title">{phase.name}</h3>
+          <span class={`phase-badge ${badgeClass}`}>
+            {phase.badge === 'active' ? 'In Progress' : 'Planned'}
+          </span>
+          <span style="margin-left:auto; font-size:0.85rem; color:var(--sl-color-gray-3)">
+            {phase.tasks.filter(t => t.status === 'done').length} / {phase.tasks.length} done — {p}%
+          </span>
+        </div>
+
+        <div class="phase-progress-bar-wrap">
+          <div class={`phase-progress-bar ${barClass}`} style={`width:${p}%`}></div>
+        </div>
+
+        <ul class="task-list">
+          {phase.tasks.map(task => (
+            <li class={`task-item task-${task.status}`}>
+              <span class="task-icon">{icons[task.status]}</span>
+              <span>{task.label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  })}
+
+  <p style="font-size:0.8rem; color:var(--sl-color-gray-3); margin-top:0.5rem">
+    ✅ complete &nbsp;·&nbsp; 🔧 in progress &nbsp;·&nbsp; ⬜ planned
+  </p>
+</div>

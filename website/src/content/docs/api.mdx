@@ -1,0 +1,134 @@
+---
+title: SQL API Reference
+description: Complete reference for all SQL functions and GUC parameters in pg_ext_memcheck.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+All SQL functions live in the `ext_memcheck` schema unless noted.
+
+---
+
+## ext_memcheck.flush_violations()
+
+Moves all entries from the in-memory shared ring buffer into the persistent `ext_memcheck.violations` table and returns the newly flushed rows.
+
+```sql
+SELECT * FROM ext_memcheck.flush_violations();
+```
+
+**Returns:** `SETOF ext_memcheck.violation`
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `bigint` | Auto-incrementing violation ID |
+| `violation_type` | `text` | One of: `context_leak`, `wrong_context`, `shmem_overrun`, `dsm_leak`, `use_after_reset`, `context_bloat` |
+| `context_name` | `text` | Name of the `MemoryContext` involved, if applicable |
+| `detail` | `text` | Human-readable description of the violation |
+| `query` | `text` | The query text active when the violation was detected |
+| `detected_at` | `timestamptz` | Wall clock time of detection |
+| `backend_pid` | `int` | PID of the backend that detected the violation |
+
+**Notes:**
+- The ring buffer is bounded by `pg_ext_memcheck.log_size`. When full, oldest entries are overwritten. Call `flush_violations()` regularly to avoid data loss.
+- Returns zero rows if no violations have been detected since the last flush.
+
+---
+
+## memcheck.begin()
+
+<Aside type="note" title="In progress">
+  This function is under development. See the [Roadmap](/roadmap/).
+</Aside>
+
+Opens a manual test window. A snapshot of the `MemoryContext` tree is taken immediately. All violations detected until `memcheck.end()` is called are attributed to this window.
+
+```sql
+SELECT memcheck.begin();
+```
+
+**Returns:** `void`
+
+Use this when you want finer-grained control than the automatic executor-hook window:
+
+```sql
+SELECT memcheck.begin();
+
+-- Run several operations you want to check together
+SELECT my_ext.func_a();
+SELECT my_ext.func_b();
+
+SELECT memcheck.end();
+SELECT * FROM ext_memcheck.flush_violations();
+```
+
+---
+
+## memcheck.end()
+
+<Aside type="note" title="In progress">
+  This function is under development. See the [Roadmap](/roadmap/).
+</Aside>
+
+Closes the current manual test window. A post-snapshot is taken, diffed against the pre-snapshot from `memcheck.begin()`, and violations are written to the ring buffer.
+
+```sql
+SELECT memcheck.end();
+```
+
+**Returns:** `void`
+
+---
+
+## memcheck.run_scenario()
+
+<Aside type="note" title="Phase 2">
+  This function is planned for Phase 2. See the [Roadmap](/roadmap/).
+</Aside>
+
+Runs a named stress scenario against a target function.
+
+```sql
+SELECT memcheck.run_scenario(
+    scenario   => 'context_reset_storm',
+    target     => 'my_ext.my_function',
+    iterations => 100
+);
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `scenario` | `text` | — | Scenario name. See [Stress Scenarios](/scenarios/). |
+| `target` | `regproc` | — | The function to test, specified as `schema.function`. |
+| `iterations` | `int` | `50` | Number of times to invoke the target within the scenario. |
+| `args` | `text[]` | `'{}'` | Arguments passed to the target function on each invocation. |
+
+**Returns:** `void`. Results are written to the violation ring buffer; call `flush_violations()` to read them.
+
+---
+
+## GUC parameters
+
+Set these in `postgresql.conf` or with `SET` at session scope.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `pg_ext_memcheck.enabled` | `bool` | `on` | Master switch. Disabling stops all hooks with near-zero overhead. |
+| `pg_ext_memcheck.log_size` | `int` | `1024` | Violation ring buffer capacity in entries. |
+| `pg_ext_memcheck.strict_contexts` | `bool` | `off` | When `on`, wrong-context allocations raise an `ERROR` instead of logging a warning. |
+| `pg_ext_memcheck.watch_contexts` | `text` | `''` | Comma-separated list of additional context names to treat as forbidden targets for `palloc()`. |
+
+---
+
+## Violation types reference
+
+| Type | Phase | Description |
+|---|---|---|
+| `context_leak` | 1 | A `MemoryContext` created during query execution was not freed by `ExecutorEnd`. |
+| `wrong_context` | 1 | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
+| `shmem_overrun` | 2 | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
+| `dsm_leak` | 2 | A DSM segment was attached during a test window but not detached before the window closed. |
+| `use_after_reset` | 2 | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
+| `context_bloat` | 2 | Total allocated bytes in the context tree increased monotonically across all iterations of a growth benchmark scenario. |

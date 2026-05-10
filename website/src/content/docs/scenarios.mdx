@@ -1,0 +1,110 @@
+---
+title: Stress Scenarios
+description: The built-in stress scenario catalog for pg_ext_memcheck.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="note" title="Phase 2">
+  All stress scenarios are planned for Phase 2. See the [Roadmap](/roadmap/).
+</Aside>
+
+Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `memcheck.run_scenario()`.
+
+---
+
+## context_reset_storm
+
+Rapidly and repeatedly resets the current `MemoryContext` between invocations of the target function. Reveals extensions that hold raw pointers across context boundaries.
+
+```sql
+SELECT memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', iterations => 200);
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `iterations` | `50` | Number of invocations |
+| `reset_frequency` | `1` | Reset context every N invocations |
+
+**What it catches:** Use-after-reset dereferences; context-local data that survives a reset by accident.
+
+---
+
+## tx_abort_loop
+
+Invokes the target function inside a transaction, then aborts the transaction before committing. Repeats many times. Exposes resources that are only released on COMMIT, not ROLLBACK.
+
+```sql
+SELECT memcheck.run_scenario('tx_abort_loop', target => 'my_ext.fn', iterations => 100);
+```
+
+**What it catches:** Context leaks that only manifest on transaction abort; resources tied to transaction callbacks that are never called on abort.
+
+---
+
+## concurrent_backends
+
+Spawns multiple background workers that simultaneously invoke the target function. Stresses shared data structures and LWLock usage.
+
+```sql
+SELECT memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', iterations => 50);
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `workers` | `4` | Number of concurrent backend workers |
+| `iterations` | `50` | Invocations per worker |
+
+**What it catches:** Shmem overruns under concurrent access; DSM lifecycle races; LWLock starvation.
+
+---
+
+## growth_benchmark
+
+Invokes the target function a large number of times and measures the change in total bytes allocated across the `MemoryContext` tree. Computes a leak rate in bytes/invocation.
+
+```sql
+SELECT memcheck.run_scenario('growth_benchmark', target => 'my_ext.fn', iterations => 1000);
+```
+
+**What it catches:** Slow cumulative leaks that would be invisible in a single-call test; monotonic context bloat.
+
+---
+
+## shmem_sentinel_probe
+
+Runs the target function and then checks all sentinel regions around tracked `ShmemAlloc()` allocations. Can be combined with `concurrent_backends` for maximum coverage.
+
+```sql
+SELECT memcheck.run_scenario('shmem_sentinel_probe', target => 'my_ext.fn');
+```
+
+**What it catches:** Shared memory boundary overruns; off-by-one writes into guard regions.
+
+---
+
+## dsm_lifecycle_check
+
+Runs the target function inside a DSM segment allocation/deallocation cycle and verifies that the extension correctly attaches and detaches.
+
+```sql
+SELECT memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
+```
+
+**What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls.
+
+---
+
+## wrong_context_probe
+
+Instruments `palloc()` calls during target invocation and checks that no allocation lands in `TopMemoryContext`, `CacheMemoryContext`, or any user-specified forbidden context.
+
+```sql
+SELECT memcheck.run_scenario(
+    'wrong_context_probe',
+    target => 'my_ext.fn',
+    args   => ARRAY['{"pg_ext_memcheck.watch_contexts": "MyLongLivedCtx"}']
+);
+```
+
+**What it catches:** Accidental long-lived allocations from query-handler code.

@@ -1,0 +1,96 @@
+---
+title: Features
+description: Deep dive into every detection capability in pg_ext_memcheck.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## MemoryContext leak detection
+
+PostgreSQL allocates memory through a tree of `MemoryContext` nodes. When extension code creates a child context to hold query-duration data, it must free that context before returning. If it doesn't, the context persists — silently growing with each invocation.
+
+**How it works:**
+
+1. `ExecutorStart` hook fires → `context_walker` walks the entire `MemoryContext` tree and records a snapshot: each context's name, parent pointer, and allocation stats.
+2. Extension code runs.
+3. `ExecutorEnd` hook fires → `context_walker` takes a second snapshot and diffs it against the first.
+4. Any context present in the post-query snapshot but absent from the pre-query snapshot is logged as a `context_leak` violation.
+
+```c
+/* Example: buggy extension that leaks a context */
+Datum
+my_func(PG_FUNCTION_ARGS)
+{
+    MemoryContext ctx = AllocSetContextCreate(
+        CurrentMemoryContext,
+        "MyWorkCtx",
+        ALLOCSET_DEFAULT_SIZES
+    );
+    /* ... work happens here ... */
+    /* BUG: MemoryContextDelete(ctx) is missing */
+    PG_RETURN_NULL();
+}
+```
+
+pg_ext_memcheck will report:
+```
+violation_type: context_leak
+context_name:   "MyWorkCtx"
+detail:         "Context present in post-query snapshot but absent pre-query"
+```
+
+---
+
+## Wrong-context allocation detection
+
+<Aside type="note" title="In progress">
+  This feature is under active development. See the [Roadmap](/roadmap/).
+</Aside>
+
+Allocating in `TopMemoryContext` or `CacheMemoryContext` from a query-handler is almost always a bug. These contexts live for the entire backend lifetime; any allocation that lands there will never be freed until the backend exits.
+
+**How it works:** The checker instruments `palloc()` call sites (via executor hooks wrapping extension invocation) and checks `CurrentMemoryContext` at the moment of allocation. If the current context matches a configured blocklist (top, cache, or any user-specified long-lived context), a `wrong_context` violation is logged.
+
+---
+
+## Shmem boundary sentinel probing
+
+<Aside type="note" title="Phase 2">
+  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
+</Aside>
+
+Extensions that use `ShmemAlloc()` are responsible for staying within their allocated bounds. Overruns corrupt adjacent shared memory structures silently — no segfault, just data corruption.
+
+**How it works:** `shmem_probe.c` plants a known byte pattern (sentinel) in a guard region immediately after each tracked shared memory allocation. After extension code runs, it re-reads the sentinel. A mismatch indicates an overrun.
+
+---
+
+## DSM segment lifecycle tracking
+
+<Aside type="note" title="Phase 2">
+  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
+</Aside>
+
+Dynamic Shared Memory (DSM) segments must be explicitly detached when no longer needed. Leaked segments persist until the postmaster exits, consuming shared memory pool capacity.
+
+**How it works:** `dsm_tracker.c` records every `dsm_attach()` call. At the end of a test window, it verifies that every attached segment was also detached. Unmatched attaches are logged as `dsm_leak` violations.
+
+---
+
+## Use-after-reset simulation
+
+<Aside type="note" title="Phase 2">
+  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
+</Aside>
+
+`MemoryContextReset()` frees all allocations within a context without deleting the context itself. Extension code that holds a raw pointer into a reset context will dereference freed memory — a bug that only manifests under specific timing conditions in production.
+
+**How it works:** The `worker_harness.c` background worker runs the extension function, forces a `MemoryContextReset()` on designated contexts mid-execution, then re-invokes the function. Crashes are caught by the worker isolation boundary and reported as `use_after_reset` violations.
+
+---
+
+## Context growth measurement
+
+Measures the total bytes allocated in the `MemoryContext` tree across repeated invocations. A steady increase indicates a slow leak that would eventually exhaust memory under load.
+
+**How it works:** `context_walker` records `totalSpace` from `MemoryContextStats()` at the start and end of each test window. The delta is logged. Over a configurable number of iterations, a monotonically increasing delta is flagged as `context_bloat`.
