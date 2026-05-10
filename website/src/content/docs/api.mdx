@@ -111,14 +111,41 @@ SELECT memcheck.run_scenario(
 
 ## GUC parameters
 
-Set these in `postgresql.conf` or with `SET` at session scope.
+Set these in `postgresql.conf` or with `SET` at session scope (`PGC_USERSET` — no restart required).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `pg_ext_memcheck.enabled` | `bool` | `on` | Master switch. Disabling stops all hooks with near-zero overhead. |
-| `pg_ext_memcheck.log_size` | `int` | `1024` | Violation ring buffer capacity in entries. |
-| `pg_ext_memcheck.strict_contexts` | `bool` | `off` | When `on`, wrong-context allocations raise an `ERROR` instead of logging a warning. |
-| `pg_ext_memcheck.watch_contexts` | `text` | `''` | Comma-separated list of additional context names to treat as forbidden targets for `palloc()`. |
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | Controls which parts of query execution are instrumented. See below. |
+| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored. |
+
+---
+
+## pg_ext_memcheck.memcheck_mode
+
+The primary control knob for the extension. Determines which execution phases are hooked and checked.
+
+```sql
+-- Disable all instrumentation (zero overhead)
+SET pg_ext_memcheck.memcheck_mode = 'none';
+
+-- Check only executor-phase allocations (default for focused testing)
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+
+-- Check all phases: planner, executor, and utility commands
+SET pg_ext_memcheck.memcheck_mode = 'all';
+```
+
+| Value | Hooks active | When to use |
+|---|---|---|
+| `none` | None | Disable the extension without unloading it; zero runtime overhead. |
+| `executor` | `ExecutorStart`, `ExecutorEnd` | Focused testing of a specific extension function. Least noise. |
+| `all` | Planner + executor + utility | Full sweep — catches leaks that happen during planning or in DDL handlers. |
+
+**Recommended workflow:**
+
+1. Start with `executor` to isolate your function under test.
+2. Promote to `all` before marking the extension as clean — planner hooks and utility handlers are common sources of leaks that `executor`-only misses.
+3. Set to `none` in shared CI environments where another test suite is running, to avoid cross-contamination of violation logs.
 
 ---
 

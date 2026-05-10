@@ -102,8 +102,13 @@ SELECT * FROM ext_memcheck.flush_violations();
 
 ## GUC parameters
 
-| Parameter | Default | Description |
-|---|---|---|
-| `pg_ext_memcheck.enabled` | `on` | Master switch. Set to `off` to disable all instrumentation. |
-| `pg_ext_memcheck.log_size` | `1024` | Violation ring buffer capacity (number of entries). |
-| `pg_ext_memcheck.strict_contexts` | `off` | Treat wrong-context allocations as errors rather than warnings. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. See [API reference](/api/#pg_ext_memcheckmemcheck_mode). |
+| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (in bytes) is silently ignored. |
+
+For focused testing of a single function, set mode to `executor` to reduce noise:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+```
