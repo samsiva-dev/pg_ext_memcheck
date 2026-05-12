@@ -10,7 +10,8 @@ OBJS = src/pg_ext_memcheck.o \
        src/dsm_tracker.o \
        src/shmem_probe.o \
        src/violation_log.o \
-       src/worker_harness.o
+       src/worker_harness.o \
+       src/sql_api.o
 
 # Name of the shared library to be built
 MODULE_big = pg_ext_memcheck

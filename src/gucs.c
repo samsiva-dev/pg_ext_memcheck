@@ -21,6 +21,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/guc.h"
+#include <limits.h>
 
 // Local Includes
 #include "include/gucs.h"
@@ -44,7 +45,7 @@ DefineCustomGUCs(void)
     DefineCustomEnumVariable("pg_ext_memcheck.memcheck_mode",
                              "Sets the memory checking mode for the pg_ext_memcheck extension.",
                              "Available modes: MEMCHECK_ALL, MEMCHECK_EXECUTOR, MEMCHECK_NONE.",
-                             &memcheck_mode,
+                             (int *) &memcheck_mode,
                              MEMCHECK_ALL,           // default value
                              memcheck_mode_options,  // enum options
                              PGC_USERSET,            // context
