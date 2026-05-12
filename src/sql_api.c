@@ -28,6 +28,7 @@
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "utils/memutils.h"
 #include "utils/tuplestore.h"
 
 // Local Includes
@@ -67,10 +68,6 @@ memcheck_begin(PG_FUNCTION_ARGS)
  * and returns the results of the memory check session, such as any logged violations in the 
  * format check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ by reading from the shared violation log.
  * 
- * Defintion: CREATE OR REPLACE FUNCTION ext_memcheck.end()
-    RETURNS TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)
-    AS 'pg_ext_memcheck', 'memcheck_end'
-    LANGUAGE C STRICT;
  */
 PG_FUNCTION_INFO_V1(memcheck_end);
 Datum
@@ -93,42 +90,68 @@ memcheck_end(PG_FUNCTION_ARGS)
                 (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                  errmsg("set-valued function called in context that cannot accept a set")));
 
-    /* Build and bless a tuple descriptor for the result set */
-    tupdesc = CreateTemplateTupleDesc(4);
-    TupleDescInitEntry(tupdesc, (AttrNumber) 1, "check_type", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber) 2, "severity", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber) 3, "detail", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber) 4, "ts", TIMESTAMPTZOID, -1, 0);
-    BlessTupleDesc(tupdesc);
-
-    tupstore = tuplestore_begin_heap(true, false, work_mem);
-
-    entries = violation_log_read_all();
-    if (entries != NULL)
     {
-        Datum   values[4];
-        bool    nulls[4] = {false, false, false, false};
+        MemoryContext    oldcontext;
+        Datum            values[4];
+        bool             nulls[4] = {false, false, false, false};
 
-        for (i = 0; i < MEMCHECK_MAX_VIOLATIONS; i++)
+        /* All tuplestore/descriptor allocations must live in per-query memory */
+        oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
+
+        /* Build and bless a tuple descriptor for the result set */
+        tupdesc = CreateTemplateTupleDesc(4);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 1, "check_type", TEXTOID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 2, "severity", TEXTOID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 3, "detail", TEXTOID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 4, "ts", TIMESTAMPTZOID, -1, 0);
+        BlessTupleDesc(tupdesc);
+
+        tupstore = tuplestore_begin_heap(true, false, work_mem);
+        rsinfo->returnMode = SFRM_Materialize;
+        rsinfo->setResult = tupstore;
+        rsinfo->setDesc = tupdesc;
+
+        entries = violation_log_read_all();
+        if (entries != NULL)
         {
-            ViolationEntry *e = &entries[i];
+            for (i = 0; i < MEMCHECK_MAX_VIOLATIONS; i++)
+            {
+                ViolationEntry *e = &entries[i];
 
-            /* Skip slots that have never been written (check_type is empty). */
-            if (e->check_type[0] == '\0')
-                continue;
+                /* Skip slots that have never been written (check_type is empty). */
+                if (e->check_type[0] == '\0')
+                    continue;
 
-            values[0] = CStringGetTextDatum(e->check_type);
-            values[1] = CStringGetTextDatum(e->severity);
-            values[2] = CStringGetTextDatum(e->detail);
-            values[3] = TimestampTzGetDatum(e->ts);
+                values[0] = CStringGetTextDatum(e->check_type);
+                values[1] = CStringGetTextDatum(e->severity);
+                values[2] = CStringGetTextDatum(e->detail);
+                values[3] = TimestampTzGetDatum(e->ts);
 
-            tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+                tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+            }
         }
+
+        MemoryContextSwitchTo(oldcontext);
     }
 
-    rsinfo->returnMode = SFRM_Materialize;
-    rsinfo->setResult = tupstore;
-    rsinfo->setDesc = tupdesc;
+    PG_RETURN_NULL();
+}
 
+
+/*
+    * memcheck_run_scenario -- SQL-callable function to run a predefined memory check scenario.
+    *
+    * This function takes a scenario name as input, executes the corresponding test scenario, and returns the results.
+    * For example, scenarios could include "context_reset_storm", "tx_abort_loop", "concurrent_backends", etc.
+    *
+*/
+PG_FUNCTION_INFO_V1(memcheck_run_scenario);
+Datum
+memcheck_run_scenario(PG_FUNCTION_ARGS)
+{   
+    text *scenario_text = PG_GETARG_TEXT_PP(0);
+    char *scenario_str = text_to_cstring(scenario_text);
+    // Placeholder for actual scenario execution logic
+    elog(INFO, "Running memory check scenario: %s", scenario_str); 
     PG_RETURN_NULL();
 }
