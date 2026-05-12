@@ -1,0 +1,75 @@
+---
+title: pg_ext_memcheck
+description: Catch PostgreSQL memory bugs that Valgrind cannot.
+template: splash
+hero:
+  tagline: Instrument and stress-test the memory behavior of PostgreSQL extensions — from inside the backend process.
+  actions:
+    - text: Quickstart
+      link: /quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: View Roadmap
+      link: /roadmap/
+      icon: bars
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<div class="warning-banner">
+  ⚠️ <strong>Development preview.</strong> pg_ext_memcheck is under active development and is <strong>not safe for production</strong>. APIs may change between releases.
+</div>
+
+## Why pg_ext_memcheck?
+
+Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memory model. They can't tell you that a `palloc()` went into the wrong `MemoryContext`, that a context leaked across a query boundary, or that shared memory sentinels were overwritten by a buggy extension.
+
+**pg_ext_memcheck runs inside the backend process**, giving it full visibility into the `MemoryContext` tree and PostgreSQL's internal allocators.
+
+<table class="comparison-table">
+  <thead>
+    <tr>
+      <th>Bug class</th>
+      <th>Valgrind</th>
+      <th>ASan</th>
+      <th>pg_ext_memcheck</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>MemoryContext leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>Wrong-context palloc</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>Shmem boundary overrun</td><td class="partial">±</td><td class="partial">±</td><td class="tick">✓</td></tr>
+    <tr><td>DSM segment leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>Use-after-reset bug</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>Context growth / bloat</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>Heap use-after-free</td><td class="tick">✓</td><td class="tick">✓</td><td class="cross">✗</td></tr>
+  </tbody>
+</table>
+
+## What it detects
+
+<CardGrid>
+  <Card title="Context leaks" icon="warning">
+    Snapshots the `MemoryContext` tree before and after a query, then diffs it to surface contexts that were created but never freed.
+  </Card>
+  <Card title="Wrong-context allocations" icon="error">
+    Flags `palloc()` calls that land in long-lived contexts like `TopMemoryContext` or `CacheMemoryContext` when they should be query-local.
+  </Card>
+  <Card title="Shmem overruns" icon="information">
+    Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
+  </Card>
+  <Card title="DSM lifecycle" icon="document">
+    Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
+  </Card>
+  <Card title="Use-after-reset" icon="setting">
+    Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
+  </Card>
+  <Card title="Context bloat" icon="approve-check-circle">
+    Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
+  </Card>
+</CardGrid>
+
+## Current status
+
+The extension is in active development. See the [Roadmap](/roadmap/) for a live view of what is done, in progress, and planned.

@@ -1,0 +1,37 @@
+---
+title: Roadmap & Progress
+description: Live development status for pg_ext_memcheck — what is done, in progress, and planned.
+---
+
+import ProgressTracker from '../../components/ProgressTracker.astro';
+
+pg_ext_memcheck is being built in two phases. Phase 1 delivers an MVP that handles the most common PostgreSQL-specific memory bugs via SQL-queryable violation logs. Phase 2 adds shmem probing, DSM tracking, and crash-isolated background worker testing.
+
+<ProgressTracker />
+
+## Phase 1 scope
+
+Phase 1 focuses on the bugs that hurt extension authors most often and that no external tool can catch:
+
+- **Context leak detection** via before/after tree snapshots across query execution
+- **Wrong-context allocation detection** — palloc() calls that accidentally land in `TopMemoryContext` or `CacheMemoryContext`
+- **SQL-queryable violation log** — all detected violations are written to a shared ring buffer and exposed via `ext_memcheck.flush_violations()`
+- **Session-level control API** — `memcheck.begin()` / `memcheck.end()` to bracket test windows manually
+
+## Phase 2 scope
+
+Phase 2 adds probes that require deeper instrumentation or process isolation:
+
+- **Shmem sentinel probing** — sentinel bytes around shared memory allocations, verified post-invocation
+- **DSM tracking** — attach/detach lifecycle verification to catch leaked dynamic shared memory segments
+- **BGWorker crash harness** — run crash-inducing scenarios in an isolated background worker to protect the test session
+- **Stress scenario catalog** — 7 parameterized scenarios (reset storm, tx abort loop, concurrent backends, growth benchmark, and more)
+
+## Known limitations
+
+| Limitation | Detail |
+|---|---|
+| Not production-safe | Instruments internals not designed for runtime inspection |
+| PG 14+ only | Relies on `MemoryContextData` layout introduced in PG 14 |
+| Context name collisions | Named context matching can fail if two contexts share a name |
+| Single-backend view | Phase 1 does not observe allocations in other backend processes |

@@ -1,0 +1,139 @@
+---
+title: Architecture
+description: How pg_ext_memcheck is structured internally and how its modules interact.
+---
+
+## Overview
+
+pg_ext_memcheck is a standard PostgreSQL extension (`.so` loaded via `shared_preload_libraries`) composed of eight C modules. It instruments the backend process from the inside, using official PostgreSQL hook APIs — no patching of PostgreSQL source is required.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Backend Process                    │
+│                                                      │
+│  SQL Layer  ──►  memcheck_hooks.c  (executor hooks) │
+│                       │                              │
+│          ┌────────────┼────────────┐                 │
+│          ▼            ▼            ▼                 │
+│  context_walker   shmem_probe   dsm_tracker          │
+│      (Phase 1)    (Phase 2)     (Phase 2)            │
+│          │                                           │
+│          ▼                                           │
+│   violation_log.c  (shared ring buffer)              │
+│          │                                           │
+│          ▼                                           │
+│   SQL: flush_violations() ──► violations table       │
+│                                                      │
+│  worker_harness.c  (background worker, Phase 2)      │
+│  gucs.c            (GUC parameters)                  │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Modules
+
+### memcheck_hooks.c
+
+The entry point. Registers `ExecutorStart_hook` and `ExecutorEnd_hook`. These bracket every query execution with:
+
+1. **ExecutorStart** → calls `context_walker` to take a pre-snapshot, opens a test window.
+2. **ExecutorEnd** → calls `context_walker` for a post-snapshot, triggers diff, passes violations to `violation_log`.
+
+This is the only module active in Phase 1 production (non-scenario) mode.
+
+---
+
+### context_walker.c
+
+Recursively walks the `MemoryContext` tree rooted at `TopMemoryContext` using `MemoryContextData` internals. Produces a flat array of `ContextNode` records:
+
+```c
+typedef struct ContextNode {
+    char        name[NAMEDATALEN];
+    MemoryContext addr;          /* pointer identity */
+    Size        totalSpace;
+    Size        freeSpace;
+    int         depth;
+} ContextNode;
+```
+
+**Diff algorithm:** After a query, the post-snapshot is compared against the pre-snapshot by `addr` (pointer identity). Contexts in post but not pre → `context_leak`. Contexts in both with monotonically increasing `totalSpace` across iterations → `context_bloat`.
+
+Named context matching uses `strcmp` on `name` as a fallback for contexts that are recreated between snapshots (same name, different pointer).
+
+---
+
+### violation_log.c
+
+Manages a fixed-size ring buffer in shared memory, protected by a single `LWLock`. Consumers call `flush_violations()` to drain the buffer into the `ext_memcheck.violations` table.
+
+```c
+typedef struct ViolationEntry {
+    ViolationType type;
+    char          context_name[NAMEDATALEN];
+    char          detail[512];
+    char          query[1024];
+    TimestampTz   detected_at;
+    int           backend_pid;
+} ViolationEntry;
+```
+
+Buffer capacity is set by `pg_ext_memcheck.log_size` at startup. When full, oldest entries are overwritten (oldest-first eviction). This is intentional: recent violations are more actionable.
+
+---
+
+### gucs.c
+
+Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable` / `DefineCustomIntVariable`. Parameters take effect immediately except `log_size`, which is read only at shared memory initialization (`_PG_init`).
+
+---
+
+### shmem_probe.c *(Phase 2)*
+
+Intercepts `ShmemAlloc()` calls and allocates an extra guard region of 16 bytes after each tracked allocation. Fills the guard with a known sentinel pattern (`0xDEADC0DE...`). At the close of each test window, re-reads the sentinel and logs `shmem_overrun` violations where the pattern has changed.
+
+---
+
+### dsm_tracker.c *(Phase 2)*
+
+Hooks `dsm_attach()` and `dsm_detach()` to maintain a per-backend table of active DSM handles. At test window close, any handle in the attach table without a matching detach is logged as a `dsm_leak` violation.
+
+---
+
+### worker_harness.c *(Phase 2)*
+
+A `BackgroundWorker` process that accepts scenario run requests via a shared message queue. Runs the target function in isolation so that crash-inducing scenarios (use-after-reset simulation, shmem overrun probes) cannot crash the client backend. Reports results back through the violation log.
+
+---
+
+## Data flow for a typical check
+
+```
+Client backend
+  │
+  ├─ SELECT memcheck.begin();
+  │       └─ context_walker: pre-snapshot → stored in local memory
+  │
+  ├─ SELECT my_ext.some_function('arg');
+  │       └─ executor hooks fire around this query
+  │
+  ├─ SELECT memcheck.end();
+  │       ├─ context_walker: post-snapshot
+  │       ├─ diff: pre vs. post → violations found
+  │       └─ violation_log: entries written to ring buffer (LWLock)
+  │
+  └─ SELECT * FROM ext_memcheck.flush_violations();
+          ├─ violation_log: drain ring buffer → INSERT into violations table
+          └─ RETURN violations to client
+```
+
+## PostgreSQL version compatibility
+
+| PG Version | Status |
+|---|---|
+| 14 | Supported (primary target) |
+| 15 | Supported |
+| 16 | Supported |
+| 17 | Under verification |
+| ≤ 13 | Not supported (`MemoryContextData` layout differs) |
