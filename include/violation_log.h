@@ -7,7 +7,7 @@
 
 // Maximum number of violation entries to keep in the shared ring buffer at any time.
 // Older entries will be overwritten when the buffer is full.
-#define MEMCHECK_MAX_VIOLATIONS 256
+#define MEMCHECK_MAX_VIOLATIONS 2048
 
 
 // ViolationEntry represents a single memory violation detected by the extension.

@@ -49,3 +49,10 @@ CREATE OR REPLACE FUNCTION ext_memcheck.run_scenario(
 RETURNS TEXT
 AS 'pg_ext_memcheck', 'memcheck_run_scenario'
 LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION ext_memcheck.clear_violations()
+RETURNS void
+LANGUAGE SQL
+AS $$
+DELETE FROM ext_memcheck.violation_log;
+$$;
