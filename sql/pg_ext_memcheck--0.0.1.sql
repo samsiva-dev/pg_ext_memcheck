@@ -42,7 +42,10 @@ RETURNS TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)
 AS 'pg_ext_memcheck', 'memcheck_end'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION ext_memcheck.run_scenario(scenario_name TEXT)
+CREATE OR REPLACE FUNCTION ext_memcheck.run_scenario(
+    senario_name TEXT,
+    iterations INTEGER DEFAULT 100
+)
 RETURNS TEXT
 AS 'pg_ext_memcheck', 'memcheck_run_scenario'
 LANGUAGE C STRICT;

@@ -63,6 +63,7 @@ _PG_init(void)
     // Install hooks
     install_hooks();
     install_executor_hooks();
+    install_planner_hook();
 }
 
 // Extension unload callback
@@ -74,6 +75,7 @@ _PG_fini(void)
     // Uninstall hooks
     uninstall_hooks();
     uninstall_executor_hooks();
+    uninstall_planner_hook();
 }
 
 /*

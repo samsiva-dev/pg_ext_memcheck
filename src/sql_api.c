@@ -36,6 +36,11 @@
 #include "include/gucs.h"
 #include "include/violation_log.h"
 #include "include/context_walker.h"
+#include "include/memcheck_hooks.h"
+
+// Static function declarations
+static void run_growth_benchmark(int iterations);
+static void run_tx_abort_loop(int iterations);
 
 /*
  * memcheck_begin -- SQL-callable function to start a memory check session.
@@ -151,7 +156,101 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 {   
     text *scenario_text = PG_GETARG_TEXT_PP(0);
     char *scenario_str = text_to_cstring(scenario_text);
+    // Default iterations, can be overridden by argument
+    int iterations = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100; 
+
     // Placeholder for actual scenario execution logic
     elog(INFO, "Running memory check scenario: %s", scenario_str); 
-    PG_RETURN_NULL();
+    elog(INFO, "Iterations: %d", iterations);
+
+    CtxTree *before_snapshot_tree = snapshot_context_tree(TopMemoryContext); 
+    memcheck_in_internal_query = true; // Set flag to indicate we're running an internal scenario query
+
+    if (strcmp(scenario_str, "growth_benchmark") == 0) {
+        run_growth_benchmark(iterations);
+    } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
+        run_tx_abort_loop(iterations);
+    } else {
+        elog(ERROR, "Unknown scenario: %s", scenario_str);
+    }
+
+    memcheck_in_internal_query = false; // Reset flag after scenario execution
+    CtxTree *after_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+
+    // Analyze differences between before and after snapshots, log any detected issues.
+    int diff_count = 0;
+    CtxDiff *diffs = diff_context_trees(before_snapshot_tree, after_snapshot_tree, &diff_count);
+    for (int i = 0; i < diff_count; i++) {
+        analyze_and_log_diff(&diffs[i]);
+    }
+    // Check for wrong context allocations as well
+    check_wrong_context_alloc(before_snapshot_tree, after_snapshot_tree); 
+
+    PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
 }
+
+static void 
+run_growth_benchmark(int iterations) {
+    if (iterations <= 0) {
+        elog(ERROR, "Iterations must be a positive integer");
+        return;
+    }
+
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        return;
+    }
+
+    for (int i = 0; i < iterations; i++) {
+        int ret = SPI_execute("SELECT 1", true, 0);
+        if (ret != SPI_OK_SELECT) {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+    }
+
+    SPI_finish();
+}
+
+static void 
+run_tx_abort_loop(int iterations) {
+    if (iterations <= 0) {
+        elog(ERROR, "Iterations must be a positive integer");
+        return;
+    }
+
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        return;
+    }
+
+    for (int i = 0; i < iterations; i++) {
+        // Start a transaction, then immediately abort it to test memory cleanup on transaction abort.
+        int ret = SPI_execute("SAVEPOINT _memcheck_sp", false, 0);
+        if (ret != SPI_OK_UTILITY) {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+
+        ret = SPI_execute("SELECT 1", true, 0);
+        if (ret != SPI_OK_SELECT) {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+
+        ret = SPI_execute("ROLLBACK TO SAVEPOINT _memcheck_sp", false, 0);
+        if (ret != SPI_OK_UTILITY) {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+    }
+
+    SPI_execute("RELEASE SAVEPOINT _memcheck_sp", false, 0); // Clean up savepoint after loop
+
+    SPI_finish();
+}
+

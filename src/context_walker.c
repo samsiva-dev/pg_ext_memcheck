@@ -23,8 +23,8 @@
  * depth.  Used as parentHash so the diff can distinguish same-named contexts
  * that live at different levels of the tree.
  */
-static Oid
-hash_name_depth(const char *name, int depth)
+Oid
+ctx_compute_hash(const char *name, int depth)
 {
     uint32      h = 5381;
     const char *p;
@@ -87,7 +87,7 @@ static void
 walk_context_tree(MemoryContext ctx, int depth, Oid parentHash, CtxTree *tree)
 {
     CtxSnapshot  snapshot = get_context_snapshot(ctx, depth, parentHash);
-    Oid          myHash   = hash_name_depth(snapshot.name, depth);
+    Oid          myHash   = ctx_compute_hash(snapshot.name, depth);
     MemoryContext child;
 
     tree_ensure_capacity(tree);

@@ -36,5 +36,6 @@ extern CtxTree* snapshot_context_tree(MemoryContext root);
 extern CtxDiff* diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count);
 extern void free_context_tree(CtxTree *tree);
 extern void free_context_diff(CtxDiff *diff);
+extern Oid ctx_compute_hash(const char *name, int depth);
 
 #endif /* CONTEXT_WALKER_H */
