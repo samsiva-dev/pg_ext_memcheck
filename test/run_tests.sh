@@ -7,8 +7,7 @@
 # Usage (from the project root):
 #   ./test/run_tests.sh
 #
-# Optional env overrides:
-#   PG_CONFIG   path to pg_config   (default: distdb postgresql-17.2)
+# Optional env overrides:  
 #   PGPORT      port for temp server (default: 9752)
 
 set -euo pipefail

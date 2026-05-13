@@ -119,3 +119,11 @@ For focused testing of a single function, set mode to `executor` to reduce noise
 ```sql
 SET pg_ext_memcheck.memcheck_mode = 'executor';
 ```
+
+## Regression testing
+The `pg_ext_memcheck` extension includes a test suite that can be run using `pg_regress` (comes with PostgreSQL source). To run the tests:
+
+From the extension directory, run:
+```bash
+PG_CONFIG=pg_config ./test/run_tests.sh
+```
