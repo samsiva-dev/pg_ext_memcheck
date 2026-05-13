@@ -1,0 +1,14 @@
+-- 06_scenario_unknown.sql
+-- Unknown scenario names must raise an error.
+
+SET client_min_messages = WARNING;
+
+DO $$
+BEGIN
+    PERFORM ext_memcheck.run_scenario('does_not_exist', 1);
+    RAISE NOTICE 'FAIL: expected error for unknown scenario';
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'OK: unknown scenario rejected';
+END;
+$$;

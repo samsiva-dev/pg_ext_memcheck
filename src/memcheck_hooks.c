@@ -285,9 +285,16 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         standard_ExecutorEnd(queryDesc); 
     }
     
-    // Skip memory checking if mode is NONE
+    // If mode is NONE, do not analyze — but still free any snapshot that was taken
+    // at the start of this query (e.g., end() set mode=NONE mid-execution).
+    // Leaving before_snapshot non-NULL would create a dangling pointer once the
+    // query's memory context is reset, corrupting the heap on the next access.
     if (memcheck_mode == MEMCHECK_NONE) {
-        return; 
+        if (before_snapshot != NULL) {
+            free_context_tree(before_snapshot);
+            before_snapshot = NULL;
+        }
+        return;
     }
 
     // For EXECUTOR/ALL mode, take an after-snapshot of the context tree at the end of the query execution,

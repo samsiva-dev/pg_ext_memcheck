@@ -1,0 +1,87 @@
+-- 02_session_lifecycle.sql
+-- Test begin/end session lifecycle: begin returns text, end returns empty set when
+-- no monitoring has occurred in NONE mode.
+SET client_min_messages = WARNING;
+-- Put extension in NONE mode so no hook fires and ring buffer stays clean
+SET pg_ext_memcheck.memcheck_mode = 'none';
+-- Flush any leftover violations from previous tests
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                7
+(1 row)
+
+-- Begin a session in 'none' mode
+SELECT ext_memcheck.begin('none');
+INFO:  Memory check session started with mode: none
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- End the session - should return 0 rows because no violations were generated
+SELECT count(*) AS violation_count FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ violation_count 
+-----------------
+               0
+(1 row)
+
+-- Begin a session in 'executor' mode
+SELECT ext_memcheck.begin('executor');
+INFO:  Memory check session started with mode: executor
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SHOW pg_ext_memcheck.memcheck_mode;
+ pg_ext_memcheck.memcheck_mode 
+-------------------------------
+ executor
+(1 row)
+
+-- End the session
+SELECT count(*) AS violation_count FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ violation_count 
+-----------------
+               0
+(1 row)
+
+-- Confirm memcheck_mode is now 'none' after end()
+SHOW pg_ext_memcheck.memcheck_mode;
+ pg_ext_memcheck.memcheck_mode 
+-------------------------------
+ none
+(1 row)
+
+-- Begin with unrecognised mode should default to 'all'
+SELECT ext_memcheck.begin('unrecognised_mode');
+INFO:  Memory check session started with mode: unrecognised_mode
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SHOW pg_ext_memcheck.memcheck_mode;
+ pg_ext_memcheck.memcheck_mode 
+-------------------------------
+ all
+(1 row)
+
+-- Cleanup
+SELECT ext_memcheck.begin('none');
+INFO:  Memory check session started with mode: none
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT count(*) FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ count 
+-------
+     0
+(1 row)
+

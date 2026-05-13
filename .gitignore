@@ -6,3 +6,8 @@
 pg_ext_memcheck
 
 .vscode/
+# Regression test runtime artifacts
+test/tmp_pgdata/
+test/results/
+test/regression.diffs
+test/regression.out

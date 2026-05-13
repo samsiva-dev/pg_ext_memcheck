@@ -16,6 +16,34 @@ OBJS = src/pg_ext_memcheck.o \
 # Name of the shared library to be built
 MODULE_big = pg_ext_memcheck
 
+# Ensure PGXS 'all' remains the default goal — must be before any explicit targets
+.DEFAULT_GOAL := all
+
+# Regression tests (pg_regress via PGXS installcheck)
+REGRESS = \
+	00_setup \
+	01_gucs \
+	02_session_lifecycle \
+	03_violation_log \
+	04_scenario_growth_benchmark \
+	05_scenario_tx_abort_loop \
+	06_scenario_unknown \
+	07_executor_hook_mode \
+	08_ring_buffer_overflow \
+	09_flush_clears_buffer \
+	10_min_leak_bytes_threshold \
+	11_violation_log_schema \
+	12_idempotent_install
+
+REGRESS_OPTS = --inputdir=test --outputdir=test
+
+# Self-contained regression target: spins up a temp cluster, runs all tests,
+# then tears down the cluster — no pre-existing server required.
+regress:
+	@bash test/run_tests.sh
+
+.PHONY: regress
+
 # PGXS makefile
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

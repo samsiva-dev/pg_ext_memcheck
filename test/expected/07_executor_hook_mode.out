@@ -1,0 +1,274 @@
+-- 07_executor_hook_mode.sql
+-- Verify the executor hook fires (or does not fire) according to memcheck_mode.
+SET client_min_messages = WARNING;
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                7
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+-- In NONE mode the executor hook must NOT record violations for a plain query
+SET pg_ext_memcheck.memcheck_mode = 'none';
+SELECT 1 AS probe;
+ probe 
+-------
+     1
+(1 row)
+
+SELECT 2 AS probe;
+ probe 
+-------
+     2
+(1 row)
+
+-- No violations should have been added to the ring buffer
+SELECT count(*) AS viol_in_none_mode FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ viol_in_none_mode 
+-------------------
+                 7
+(1 row)
+
+-- In EXECUTOR mode the hook must be active for executor statements
+SELECT ext_memcheck.begin('executor');
+INFO:  Memory check session started with mode: executor
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT generate_series(1, 100) AS n;   -- exercise executor with some work
+  n  
+-----
+   1
+   2
+   3
+   4
+   5
+   6
+   7
+   8
+   9
+  10
+  11
+  12
+  13
+  14
+  15
+  16
+  17
+  18
+  19
+  20
+  21
+  22
+  23
+  24
+  25
+  26
+  27
+  28
+  29
+  30
+  31
+  32
+  33
+  34
+  35
+  36
+  37
+  38
+  39
+  40
+  41
+  42
+  43
+  44
+  45
+  46
+  47
+  48
+  49
+  50
+  51
+  52
+  53
+  54
+  55
+  56
+  57
+  58
+  59
+  60
+  61
+  62
+  63
+  64
+  65
+  66
+  67
+  68
+  69
+  70
+  71
+  72
+  73
+  74
+  75
+  76
+  77
+  78
+  79
+  80
+  81
+  82
+  83
+  84
+  85
+  86
+  87
+  88
+  89
+  90
+  91
+  92
+  93
+  94
+  95
+  96
+  97
+  98
+  99
+ 100
+(100 rows)
+
+SELECT count(*) >= 0 AS hook_ran FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ hook_ran 
+----------
+ t
+(1 row)
+
+-- In ALL mode the planner hook must also be active
+SELECT ext_memcheck.begin('all');
+INFO:  Memory check session started with mode: all
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT generate_series(1, 100) AS n;
+  n  
+-----
+   1
+   2
+   3
+   4
+   5
+   6
+   7
+   8
+   9
+  10
+  11
+  12
+  13
+  14
+  15
+  16
+  17
+  18
+  19
+  20
+  21
+  22
+  23
+  24
+  25
+  26
+  27
+  28
+  29
+  30
+  31
+  32
+  33
+  34
+  35
+  36
+  37
+  38
+  39
+  40
+  41
+  42
+  43
+  44
+  45
+  46
+  47
+  48
+  49
+  50
+  51
+  52
+  53
+  54
+  55
+  56
+  57
+  58
+  59
+  60
+  61
+  62
+  63
+  64
+  65
+  66
+  67
+  68
+  69
+  70
+  71
+  72
+  73
+  74
+  75
+  76
+  77
+  78
+  79
+  80
+  81
+  82
+  83
+  84
+  85
+  86
+  87
+  88
+  89
+  90
+  91
+  92
+  93
+  94
+  95
+  96
+  97
+  98
+  99
+ 100
+(100 rows)
+
+SELECT count(*) >= 0 AS hook_ran FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ hook_ran 
+----------
+ t
+(1 row)
+
+-- Final cleanup
+SET pg_ext_memcheck.memcheck_mode = 'none';

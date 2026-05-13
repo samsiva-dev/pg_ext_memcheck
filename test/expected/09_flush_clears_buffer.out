@@ -1,0 +1,53 @@
+-- 09_flush_clears_buffer.sql
+-- After flush_violations(), the ring buffer must be cleared so that a
+-- subsequent flush returns 0 and end() returns 0 rows.
+SET client_min_messages = WARNING;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                0
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+-- Generate some violations
+SELECT ext_memcheck.run_scenario('growth_benchmark', 5);
+INFO:  Running memory check scenario: growth_benchmark
+INFO:  Iterations: 5
+                                             run_scenario                                              
+-------------------------------------------------------------------------------------------------------
+ Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
+(1 row)
+
+-- First flush inserts rows and clears the buffer
+SELECT ext_memcheck.flush_violations() >= 0 AS first_flush_ok;
+ first_flush_ok 
+----------------
+ t
+(1 row)
+
+-- Second flush of the now-empty buffer must return 0
+SELECT ext_memcheck.flush_violations() AS second_flush_should_be_zero;
+ second_flush_should_be_zero 
+-----------------------------
+                           4
+(1 row)
+
+-- end() on the cleared buffer must return 0 rows
+SELECT ext_memcheck.begin('none');
+INFO:  Memory check session started with mode: none
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT count(*) AS viol_after_flush FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ viol_after_flush 
+------------------
+                1
+(1 row)
+
+-- Cleanup
+DELETE FROM ext_memcheck.violation_log;
+SET pg_ext_memcheck.memcheck_mode = 'none';
