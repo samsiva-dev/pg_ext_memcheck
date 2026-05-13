@@ -43,7 +43,7 @@ SELECT * FROM ext_memcheck.violation_log;
 ### Severity levels
 | Level | Memory Leak Size |
 |---|---|
-| `CRITICAL` | ≥ 1 MB |
+| `ERROR` | ≥ 1 MB |
 | `WARNING` | ≥ 64 KB and < 1 MB |
 | `INFO` | >= min_leak_bytes and < 64 KB |
 
@@ -112,6 +112,15 @@ SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
 <Aside type="note" title="Partial implementation">
   `growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2. Passing an unknown scenario name raises an error.
 </Aside>
+
+---
+
+## ext_memcheck.clear_violations()
+Utility function to clear all entries from the `ext_memcheck.violation_log` table. Does not affect the in-memory ring buffer.
+
+```sql
+SELECT ext_memcheck.clear_violations();
+```
 
 ---
 
