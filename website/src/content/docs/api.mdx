@@ -35,77 +35,69 @@ SELECT * FROM ext_memcheck.flush_violations();
 
 ---
 
-## memcheck.begin()
+## ext_memcheck.begin()
 
-<Aside type="note" title="In progress">
-  This function is under development. See the [Roadmap](/roadmap/).
-</Aside>
-
-Opens a manual test window. A snapshot of the `MemoryContext` tree is taken immediately. All violations detected until `memcheck.end()` is called are attributed to this window.
+Opens a manual test window and sets the instrumentation mode. A snapshot of the `MemoryContext` tree is taken immediately. All violations detected until `ext_memcheck.end()` is called are attributed to this window.
 
 ```sql
-SELECT memcheck.begin();
+SELECT ext_memcheck.begin('executor');  -- check executor phase only
+SELECT ext_memcheck.begin('all');       -- check planner + executor phases
 ```
 
-**Returns:** `void`
+**Parameter:** `target_mode TEXT` — one of `'all'`, `'executor'`, or `'none'`. Unrecognised values default to `'all'`.
+
+**Returns:** `text` — confirmation message.
 
 Use this when you want finer-grained control than the automatic executor-hook window:
 
 ```sql
-SELECT memcheck.begin();
+SELECT ext_memcheck.begin('executor');
 
 -- Run several operations you want to check together
 SELECT my_ext.func_a();
 SELECT my_ext.func_b();
 
-SELECT memcheck.end();
+SELECT * FROM ext_memcheck.end();
 SELECT * FROM ext_memcheck.flush_violations();
 ```
 
 ---
 
-## memcheck.end()
+## ext_memcheck.end()
 
-<Aside type="note" title="In progress">
-  This function is under development. See the [Roadmap](/roadmap/).
-</Aside>
-
-Closes the current manual test window. A post-snapshot is taken, diffed against the pre-snapshot from `memcheck.begin()`, and violations are written to the ring buffer.
+Closes the current manual test window and returns any violations detected during the window directly as a result set.
 
 ```sql
-SELECT memcheck.end();
+SELECT * FROM ext_memcheck.end();
 ```
 
-**Returns:** `void`
+**Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)`
+
+The mode is reset to `NONE` after this call. Call `ext_memcheck.flush_violations()` afterwards to also persist any ring-buffer entries to the `violation_log` table.
 
 ---
 
-## memcheck.run_scenario()
+## ext_memcheck.run_scenario()
 
-<Aside type="note" title="Phase 2">
-  This function is planned for Phase 2. See the [Roadmap](/roadmap/).
-</Aside>
-
-Runs a named stress scenario against a target function.
+Runs a named stress scenario and returns a summary message. Violations are written to the shared ring buffer; call `ext_memcheck.flush_violations()` to read them.
 
 ```sql
-SELECT memcheck.run_scenario(
-    scenario   => 'context_reset_storm',
-    target     => 'my_ext.my_function',
-    iterations => 100
-);
+SELECT ext_memcheck.run_scenario('growth_benchmark', 200);
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
 ```
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scenario` | `text` | — | Scenario name. See [Stress Scenarios](/scenarios/). |
-| `target` | `regproc` | — | The function to test, specified as `schema.function`. |
-| `iterations` | `int` | `50` | Number of times to invoke the target within the scenario. |
-| `args` | `text[]` | `'{}'` | Arguments passed to the target function on each invocation. |
+| `scenario_name` | `text` | — | Scenario name. Currently available: `growth_benchmark`, `tx_abort_loop`. See [Stress Scenarios](/scenarios/). |
+| `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
 
-**Returns:** `void`. Results are written to the violation ring buffer; call `flush_violations()` to read them.
+**Returns:** `text` — confirmation message.
+
+<Aside type="note" title="Partial implementation">
+  `growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2. Passing an unknown scenario name raises an error.
+</Aside>
 
 ---
 

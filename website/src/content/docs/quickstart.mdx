@@ -59,15 +59,16 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 Test a simple function from any extension you are developing:
 
 ```sql
--- Start a check window around a single query
-SELECT memcheck.begin();
+-- Start a check window in executor mode
+SELECT ext_memcheck.begin('executor');
 
 -- Call the function you want to inspect
 SELECT your_extension.some_function('input');
 
-SELECT memcheck.end();
+-- End the window; returns violations detected during this window
+SELECT * FROM ext_memcheck.end();
 
--- Flush any violations detected during the window to the log table
+-- Also flush any remaining ring-buffer entries to the log table
 SELECT * FROM ext_memcheck.flush_violations();
 ```
 
@@ -86,18 +87,21 @@ A violation row looks like this:
 ## Run a built-in stress scenario
 
 ```sql
--- Run the context reset storm scenario against your function
-SELECT memcheck.run_scenario(
-  'context_reset_storm',
-  target => 'your_extension.some_function',
-  iterations => 100
-);
+-- Run the growth benchmark scenario (measures context growth over repeated calls)
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100);
 
 SELECT * FROM ext_memcheck.flush_violations();
 ```
 
-<Aside type="note" title="Phase 2 feature">
-  `memcheck.run_scenario()` and the full stress scenario catalog are Phase 2 features currently in development. See the [Roadmap](/roadmap/) for status.
+```sql
+-- Run the tx_abort_loop scenario (tests memory cleanup on transaction abort)
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
+
+SELECT * FROM ext_memcheck.flush_violations();
+```
+
+<Aside type="note" title="Available scenarios">
+  `growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are planned for Phase 2. See the [Stress Scenarios](/scenarios/) page for details.
 </Aside>
 
 ## GUC parameters

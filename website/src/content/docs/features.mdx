@@ -43,13 +43,32 @@ detail:         "Context present in post-query snapshot but absent pre-query"
 
 ## Wrong-context allocation detection
 
-<Aside type="note" title="In progress">
-  This feature is under active development. See the [Roadmap](/roadmap/).
-</Aside>
-
 Allocating in `TopMemoryContext` or `CacheMemoryContext` from a query-handler is almost always a bug. These contexts live for the entire backend lifetime; any allocation that lands there will never be freed until the backend exits.
 
-**How it works:** The checker instruments `palloc()` call sites (via executor hooks wrapping extension invocation) and checks `CurrentMemoryContext` at the moment of allocation. If the current context matches a configured blocklist (top, cache, or any user-specified long-lived context), a `wrong_context` violation is logged.
+**How it works:** `check_wrong_context_alloc()` in `memcheck_hooks.c` runs two passes over the before/after context-tree snapshots:
+
+- **Pass 1 — growth in global contexts:** For every context whose name matches a known global (`TopMemoryContext`, `CacheMemoryContext`), if `totalAllocated` grew since the pre-query snapshot, a `wrong_ctx_alloc` WARNING is emitted with the delta and absolute sizes.
+- **Pass 2 — new child contexts under globals:** If a context appears in the post-query snapshot but not the pre-query snapshot, and its parent is a known global context, a `wrong_ctx_alloc` WARNING is emitted identifying the newly created child.
+
+```c
+/* Example: buggy extension allocating in the wrong context */
+Datum
+my_func(PG_FUNCTION_ARGS)
+{
+    MemoryContext old = MemoryContextSwitchTo(TopMemoryContext);
+    char *buf = palloc(1024); /* BUG: lands in TopMemoryContext */
+    MemoryContextSwitchTo(old);
+    PG_RETURN_NULL();
+}
+```
+
+pg_ext_memcheck will report:
+```
+violation_type: wrong_ctx_alloc
+severity:       WARNING
+detail:         "context 'TopMemoryContext' (depth 0): allocated grew by 1024 bytes in a
+                 known global context (before=... after=...)"
+```
 
 ---
 

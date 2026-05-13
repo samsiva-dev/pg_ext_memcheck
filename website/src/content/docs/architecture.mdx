@@ -35,12 +35,13 @@ pg_ext_memcheck is a standard PostgreSQL extension (`.so` loaded via `shared_pre
 
 ### memcheck_hooks.c
 
-The entry point. Registers `ExecutorStart_hook` and `ExecutorEnd_hook`. These bracket every query execution with:
+The entry point. Registers `ExecutorStart_hook`, `ExecutorEnd_hook`, and `planner_hook`. These bracket every query execution with:
 
-1. **ExecutorStart** → calls `context_walker` to take a pre-snapshot, opens a test window.
-2. **ExecutorEnd** → calls `context_walker` for a post-snapshot, triggers diff, passes violations to `violation_log`.
+1. **Planner hook (ALL mode only)** → calls `context_walker` for a pre-snapshot *before* plan generation, so planning-phase allocations are captured.
+2. **ExecutorStart (EXECUTOR mode)** → calls `context_walker` for a pre-snapshot if the planner hook did not already take one.
+3. **ExecutorEnd** → calls `context_walker` for a post-snapshot, runs the context-diff, passes `context_leak` violations to `violation_log`, and runs `check_wrong_context_alloc()` to detect `wrong_ctx_alloc` violations.
 
-This is the only module active in Phase 1 production (non-scenario) mode.
+In `EXECUTOR` mode only the executor hooks are active. In `ALL` mode the planner hook fires first, giving broader coverage of planning-phase allocations.
 
 ---
 
