@@ -118,12 +118,12 @@ A `BackgroundWorker` process that accepts scenario run requests via a shared mes
 ```
 Client backend
   │
-  ├─ SELECT memcheck.begin();
+  ├─ SELECT ext_memcheck.begin();
   │       └─ sets memcheck_mode to 'executor' or 'all'
   │
-  ├─ SELECT memcheck.run_scenario('growth_benchmark', 200);
+  ├─ SELECT ext_memcheck.run_scenario('growth_benchmark', 200);
   │
-  ├─ SELECT memcheck.end();
+  ├─ SELECT ext_memcheck.end();
   │       ├─ context_walker: post-snapshot
   │       ├─ diff: pre vs. post → violations found
   │       └─ violation_log: entries written to ring buffer (LWLock)

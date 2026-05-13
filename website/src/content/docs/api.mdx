@@ -40,6 +40,13 @@ SELECT * FROM ext_memcheck.violation_log;
 | `severity` | `text` | Severity of the violation like CRITICAL, WARNING, INFO etc. |
 | `detail` | `text` | Human-readable description of the violation |
 
+### Severity levels
+| Level | Memory Leak Size |
+|---|---|
+| `CRITICAL` | ≥ 1 MB |
+| `WARNING` | ≥ 64 KB and < 1 MB |
+| `INFO` | >= min_leak_bytes and < 64 KB |
+
 ---
 
 ## ext_memcheck.begin()

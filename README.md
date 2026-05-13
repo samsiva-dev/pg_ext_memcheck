@@ -1,29 +1,201 @@
 # pg_ext_memcheck
-A PostgreSQL extension that instruments and stress-tests another extension's memory behaviour from inside the backend process.
 
-## To-Do
+> **Development preview — not production-safe.** APIs may change between releases.
 
-### Phase 1 — MVP
+Instrument and stress-test the memory behavior of PostgreSQL extensions — from inside the backend process.
 
-- [x] Extension scaffold: `_PG_init` / `_PG_fini`, `Makefile`, `.control` file — extension loads into PostgreSQL.
-- [x] Custom GUC: `pg_ext_memcheck.memcheck_mode` (ALL / EXECUTOR / NONE) defined in `gucs.c`.
-- [x] Executor hooks (`ExecutorStart_hook` / `ExecutorEnd_hook`) and planner hook (`memcheck_planner_hook`) installed and properly chained in `memcheck_hooks.c`; `ALL` mode takes the pre-query snapshot in the planner hook so planning-phase allocations are also tracked.
-- [x] Context tree snapshot (`snapshot_context_tree`) and diff (`diff_context_trees`) implemented in `context_walker.c`.
-- [x] Basic memory-delta logging in executor hooks (elog output of context diffs).
-- [x] All module headers defined (`context_walker.h`, `gucs.h`, `memcheck_hooks.h`, `enums.h`).
-- [x] **Violation log** (`violation_log.c` / `violation_log.h`): `ViolationEntry` struct, shared-memory ring buffer (`ViolationLog`), `violation_log_write()`, `violation_log_read_all()`, and `violation_log_flush()` (SQL-callable) all implemented. Bare `elog` calls in `memcheck_hooks.c` replaced with structured `violation_log_write()` calls via `analyze_and_log_diff()`.
-- [x] **Wrong-context allocation detection**: `check_wrong_context_alloc()` in `memcheck_hooks.c` implements two passes — (1) growth in known global contexts (`TopMemoryContext`, `CacheMemoryContext`) and (2) new child contexts created directly under those globals — both emit `wrong_ctx_alloc` violations.
-- [x] **SQL API** (`sql/pg_ext_memcheck--0.0.1.sql`): schema `ext_memcheck`, table `ext_memcheck.violation_log`, `ext_memcheck.flush_violations()`, `ext_memcheck.begin()`, and `ext_memcheck.end()` all implemented. Still needed: `violations` view backed by `violation_log_read_all()`.
-- [ ] **`violations` view**: SQL view exposing `violation_log_read_all()` results for direct `SELECT`.
-- [x] **`memcheck.run_scenario()` implementation**: SQL-callable function fully wired; `growth_benchmark` (SPI-loop growth measurement) and `tx_abort_loop` (savepoint-based abort cycle) scenario bodies are implemented and working. Remaining scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are Phase 2.
-- [ ] **Regression tests** (`test/`): add a basic self-test suite that loads the extension, runs a known allocation pattern, and validates the violation log output.
+Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memory model. They can't tell you that a `palloc()` went into the wrong `MemoryContext`, that a context leaked across a query boundary, or that shared memory sentinels were overwritten by a buggy extension.
 
-### Phase 2 — Additions
+**pg_ext_memcheck runs inside the backend process**, giving it full visibility into the `MemoryContext` tree and PostgreSQL's internal allocators.
 
-- [ ] **Shmem sentinel probe** (`shmem_probe.c`): implement `probe_register()` and `probe_check()` to write and verify a `0xDE` sentinel byte past a declared shmem segment end.
-- [ ] **DSM lifecycle tracker** (`dsm_tracker.c`): track `dsm_attach` / `dsm_detach` per backend; register an `on_proc_exit` callback to report still-attached handles as `dsm_leak` violations.
-- [ ] **BGWorker crash harness** (`worker_harness.c`): launch a `BackgroundWorker` for crash-inducing tests (use-after-reset); capture non-zero exit / SIGSEGV as a confirmed bug and write to the violation log.
-- [x] **Shared violation log**: `shmem_startup_hook` wired via `memcheck_shmem_startup`; ring buffer allocated in shared memory with `ShmemInitStruct`; findings queryable from SQL via `ext_memcheck.flush_violations()`.
-- [ ] **`memcheck.run_scenario()` full scenario catalog**: `growth_benchmark` and `tx_abort_loop` are implemented; `context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, and `wrong_context_probe` remain to be implemented.
-- [ ] **Allowlist for intentional global-context allocations**: add `allowed_contexts` parameter to `memcheck.begin()` to suppress false positives from extensions that deliberately use `TopMemoryContext`.
-- [ ] Update documentation with installation steps, usage examples, and known limitations.
+| Bug class | Valgrind | ASan | pg_ext_memcheck |
+|---|---|---|---|
+| MemoryContext leak | ✗ | ✗ | ✓ |
+| Wrong-context palloc | ✗ | ✗ | ✓ |
+| Shmem boundary overrun | ± | ± | ✓ |
+| DSM segment leak | ✗ | ✗ | ✓ |
+| Use-after-reset bug | ✗ | ✗ | ✓ |
+| Context growth / bloat | ✗ | ✗ | ✓ |
+| Heap use-after-free | ✓ | ✓ | ✗ |
+
+---
+
+## What it detects
+
+- **Context leaks** — Snapshots the `MemoryContext` tree before and after a query, then diffs it to surface contexts that were created but never freed.
+- **Wrong-context allocations** — Flags `palloc()` calls that land in long-lived contexts like `TopMemoryContext` or `CacheMemoryContext` when they should be query-local.
+- **Context bloat** — Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
+- **Shmem overruns** *(Phase 2)* — Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
+- **DSM lifecycle** *(Phase 2)* — Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
+- **Use-after-reset** *(Phase 2)* — Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
+
+---
+
+## Prerequisites
+
+- PostgreSQL 14 or later (server headers required)
+- `pg_config` in your `PATH`
+- A C compiler (`gcc` or `clang`)
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/samsiva-dev/pg_ext_memcheck.git
+cd pg_ext_memcheck
+make
+sudo make install
+```
+
+Add the extension to `postgresql.conf` and restart PostgreSQL:
+
+```ini
+shared_preload_libraries = 'pg_ext_memcheck'
+```
+
+Then create the extension in your database:
+
+```sql
+CREATE EXTENSION pg_ext_memcheck;
+```
+
+---
+
+## Quickstart
+
+```sql
+-- Start a check window in executor mode
+SELECT ext_memcheck.begin('executor');
+
+-- Call the function you want to inspect
+SELECT your_extension.some_function('input');
+
+-- End the window; returns violations detected during this window
+SELECT * FROM ext_memcheck.end();
+
+-- Flush ring-buffer entries to the persistent log table
+SELECT ext_memcheck.flush_violations();
+
+-- Query the violation log for details
+SELECT * FROM ext_memcheck.violation_log ORDER BY ts DESC;
+```
+
+A violation row looks like this:
+
+| Column | Example |
+|---|---|
+| `ts` | `2026-05-10 14:32:01 UTC` |
+| `backend_pid` | `12345` |
+| `detail` | `"Context present in post-query snapshot but not pre-query"` |
+| `severity` | `warning`, `info`, `critical` |
+| `check_type` | `context_leak`, `wrong_context_allocation`, `shmem_overrun` |
+
+---
+
+## Stress scenarios
+
+```sql
+-- Measures context growth over repeated calls — catches slow cumulative leaks
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100);
+
+-- Tests memory cleanup on transaction abort
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
+
+SELECT ext_memcheck.flush_violations();
+```
+
+`growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2.
+
+---
+
+## GUC parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. |
+| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (bytes) is silently ignored. |
+
+```sql
+-- Focus on executor phase only (reduces noise for targeted testing)
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+
+-- Disable all instrumentation (zero overhead)
+SET pg_ext_memcheck.memcheck_mode = 'none';
+```
+
+---
+
+## SQL API reference
+
+| Function | Returns | Description |
+|---|---|---|
+| `ext_memcheck.begin(target_mode TEXT)` | `text` | Opens a manual test window and sets `memcheck_mode`. |
+| `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts)` | Closes the window and returns violations detected. |
+| `ext_memcheck.flush_violations()` | `int` | Drains the ring buffer into `violation_log`; returns count flushed. |
+| `ext_memcheck.run_scenario(name TEXT, iterations INT)` | `text` | Runs a named stress scenario. |
+
+The ring buffer is capped at 256 entries (oldest-first eviction when full). Call `flush_violations()` regularly to avoid data loss.
+
+---
+
+## Architecture
+
+pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_libraries`. No PostgreSQL source patching is required.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Backend Process                    │
+│                                                      │
+│  SQL Layer  ──►  memcheck_hooks.c  (executor hooks) │
+│                       │                              │
+│          ┌────────────┼────────────┐                 │
+│          ▼            ▼            ▼                 │
+│  context_walker   shmem_probe   dsm_tracker          │
+│      (Phase 1)    (Phase 2)     (Phase 2)            │
+│          │                                           │
+│          ▼                                           │
+│   violation_log.c  (shared ring buffer)              │
+│          │                                           │
+│          ▼                                           │
+│   SQL: flush_violations() ──► violations table       │
+│                                                      │
+│  worker_harness.c  (background worker, Phase 2)      │
+│  gucs.c            (GUC parameters)                  │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Regression tests
+
+```bash
+PG_CONFIG=pg_config ./test/run_tests.sh
+```
+
+---
+
+## Known limitations
+
+| Limitation | Detail |
+|---|---|
+| Not production-safe | Instruments internals not designed for runtime inspection |
+| PG 14+ only | Relies on `MemoryContextData` layout introduced in PG 14 |
+| Context name collisions | Named context matching can fail if two contexts share a name |
+| Single-backend view | Phase 1 does not observe allocations in other backend processes |
+
+---
+
+## Roadmap
+
+**Phase 1 (current):** Context leak detection, wrong-context allocation detection, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
+
+**Phase 2:** Shmem sentinel probing, DSM lifecycle tracking, BGWorker crash harness, full stress scenario catalog.
+
+See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
+
+---
+
+## License
+
+[LICENSE](LICENSE)

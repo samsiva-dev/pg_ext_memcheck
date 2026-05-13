@@ -56,6 +56,7 @@ static CtxTree *before_snapshot = NULL;
 static const char *global_context_names[] = {
     "TopMemoryContext",
     "CacheMemoryContext",
+    "ErrorContext",
     NULL
 };
 

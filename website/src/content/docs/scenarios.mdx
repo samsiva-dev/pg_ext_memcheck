@@ -9,7 +9,7 @@ import { Aside } from '@astrojs/starlight/components';
   `growth_benchmark` and `tx_abort_loop` are available now. All other scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2 and are not yet implemented.
 </Aside>
 
-Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `memcheck.run_scenario()`.
+Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`.
 
 ---
 
@@ -42,7 +42,7 @@ SELECT ext_memcheck.run_scenario('tx_abort_loop', 100);
 Rapidly and repeatedly resets the current `MemoryContext` between invocations of the target function. Reveals extensions that hold raw pointers across context boundaries.
 
 ```sql
-SELECT memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', iterations => 200);
+SELECT ext_memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', iterations => 200);
 ```
 
 | Parameter | Default | Description |
@@ -59,7 +59,7 @@ SELECT memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', itera
 Spawns multiple background workers that simultaneously invoke the target function. Stresses shared data structures and LWLock usage.
 
 ```sql
-SELECT memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', iterations => 50);
+SELECT ext_memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', iterations => 50);
 ```
 
 | Parameter | Default | Description |
@@ -76,7 +76,7 @@ SELECT memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', itera
 Runs the target function and then checks all sentinel regions around tracked `ShmemAlloc()` allocations. Can be combined with `concurrent_backends` for maximum coverage.
 
 ```sql
-SELECT memcheck.run_scenario('shmem_sentinel_probe', target => 'my_ext.fn');
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', target => 'my_ext.fn');
 ```
 
 **What it catches:** Shared memory boundary overruns; off-by-one writes into guard regions.
@@ -88,7 +88,7 @@ SELECT memcheck.run_scenario('shmem_sentinel_probe', target => 'my_ext.fn');
 Runs the target function inside a DSM segment allocation/deallocation cycle and verifies that the extension correctly attaches and detaches.
 
 ```sql
-SELECT memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
+SELECT ext_memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
 ```
 
 **What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls.
@@ -100,7 +100,7 @@ SELECT memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', itera
 Instruments `palloc()` calls during target invocation and checks that no allocation lands in `TopMemoryContext`, `CacheMemoryContext`, or any user-specified forbidden context.
 
 ```sql
-SELECT memcheck.run_scenario(
+SELECT ext_memcheck.run_scenario(
     'wrong_context_probe',
     target => 'my_ext.fn',
     args   => ARRAY['{"pg_ext_memcheck.watch_contexts": "MyLongLivedCtx"}']
