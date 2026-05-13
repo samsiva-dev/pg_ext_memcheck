@@ -6,14 +6,14 @@ interface Task {
 
 interface Phase {
   name: string;
-  badge: 'active' | 'planned';
+  badge: 'active' | 'planned' | 'completed';
   tasks: Task[];
 }
 
 const phases: Phase[] = [
   {
     name: 'Phase 1 — MVP',
-    badge: 'active',
+    badge: 'completed',
     tasks: [
       { label: 'MemoryContext tree snapshot engine (context_walker)', status: 'done' },
       { label: 'Snapshot diff algorithm (context leak detection)', status: 'done' },
@@ -58,15 +58,15 @@ const icons = { done: '✅', wip: '🔧', todo: '⬜' } as const;
 <div class="progress-tracker">
   {phases.map(phase => {
     const p = pct(phase.tasks);
-    const barClass = phase.badge === 'active' ? 'bar-green' : 'bar-blue';
-    const badgeClass = phase.badge === 'active' ? 'badge-active' : 'badge-planned';
+    const barClass = phase.badge === 'active' ? 'bar-green' : phase.badge === 'completed' ? 'bar-gray' : 'bar-blue';
+    const badgeClass = phase.badge === 'active' ? 'badge-active' : phase.badge === 'completed' ? 'badge-completed' : 'badge-planned';
 
     return (
       <div class="phase-block">
         <div class="phase-header">
           <h3 class="phase-title">{phase.name}</h3>
           <span class={`phase-badge ${badgeClass}`}>
-            {phase.badge === 'active' ? 'In Progress' : 'Planned'}
+            {phase.badge === 'active' ? 'In Progress' : phase.badge === 'completed' ? 'Completed' : 'Planned'}
           </span>
           <span style="margin-left:auto; font-size:0.85rem; color:var(--sl-color-gray-3)">
             {phase.tasks.filter(t => t.status === 'done').length} / {phase.tasks.length} done — {p}%
