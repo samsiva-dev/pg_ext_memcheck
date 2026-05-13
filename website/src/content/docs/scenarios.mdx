@@ -13,6 +13,30 @@ Stress scenarios are parameterized test programs that subject an extension funct
 
 ---
 
+## growth_benchmark
+
+Invokes the target SQL (`SELECT 1` loop via SPI) a configurable number of times and measures the change in total bytes allocated across the `MemoryContext` tree. A monotonically increasing delta flags a slow cumulative leak.
+
+```sql
+SELECT ext_memcheck.run_scenario('growth_benchmark', 1000);
+```
+
+**What it catches:** Slow cumulative leaks that would be invisible in a single-call test; monotonic context bloat.
+
+---
+
+## tx_abort_loop
+
+Invokes the target function inside a savepoint, then rolls back to the savepoint before releasing it. Repeats many times. Exposes resources that are only released on COMMIT, not ROLLBACK.
+
+```sql
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 100);
+```
+
+**What it catches:** Context leaks that only manifest on transaction abort; resources tied to transaction callbacks that are never called on abort.
+
+---
+
 ## context_reset_storm *(Phase 2)*
 
 Rapidly and repeatedly resets the current `MemoryContext` between invocations of the target function. Reveals extensions that hold raw pointers across context boundaries.
@@ -30,18 +54,6 @@ SELECT memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', itera
 
 ---
 
-## tx_abort_loop
-
-Invokes the target function inside a savepoint, then rolls back to the savepoint before releasing it. Repeats many times. Exposes resources that are only released on COMMIT, not ROLLBACK.
-
-```sql
-SELECT ext_memcheck.run_scenario('tx_abort_loop', 100);
-```
-
-**What it catches:** Context leaks that only manifest on transaction abort; resources tied to transaction callbacks that are never called on abort.
-
----
-
 ## concurrent_backends *(Phase 2)*
 
 Spawns multiple background workers that simultaneously invoke the target function. Stresses shared data structures and LWLock usage.
@@ -56,18 +68,6 @@ SELECT memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', itera
 | `iterations` | `50` | Invocations per worker |
 
 **What it catches:** Shmem overruns under concurrent access; DSM lifecycle races; LWLock starvation.
-
----
-
-## growth_benchmark
-
-Invokes the target SQL (`SELECT 1` loop via SPI) a configurable number of times and measures the change in total bytes allocated across the `MemoryContext` tree. A monotonically increasing delta flags a slow cumulative leak.
-
-```sql
-SELECT ext_memcheck.run_scenario('growth_benchmark', 1000);
-```
-
-**What it catches:** Slow cumulative leaks that would be invisible in a single-call test; monotonic context bloat.
 
 ---
 

@@ -11,33 +11,40 @@ All SQL functions live in the `ext_memcheck` schema unless noted.
 
 ## ext_memcheck.flush_violations()
 
-Moves all entries from the in-memory shared ring buffer into the persistent `ext_memcheck.violations` table and returns the newly flushed rows.
+Moves all entries from the in-memory shared ring buffer (`ViolationLog`) into the persistent `ext_memcheck.violation_log` table and returns the count of rows inserted i.e., **the number of violations flushed**. It also clears the ring buffer, making it ready to log new violations.
 
 ```sql
-SELECT * FROM ext_memcheck.flush_violations();
+-- flushes all pending violations to the table ext_memcheck.violation_log
+-- and returns the count of violations
+SELECT ext_memcheck.flush_violations();
+
+-- query the violation log table directly
+-- includes all historical violations, not just the flushed ones
+SELECT * FROM ext_memcheck.violation_log;
 ```
 
-**Returns:** `SETOF ext_memcheck.violation`
+**Returns:** `int` — number of violations flushed to the table.
+
+**Notes:**
+- The ring buffer is bounded by `MEMCHECK_MAX_VIOLATIONS` set to constant `256` (not configurable). When full, oldest entries are overwritten. Call `flush_violations()` regularly to avoid data loss.
+- Returns zero if no violations have been detected since the last flush.
+
+### Violation log table schema
 
 | Column | Type | Description |
 |---|---|---|
-| `id` | `bigint` | Auto-incrementing violation ID |
-| `violation_type` | `text` | One of: `context_leak`, `wrong_context`, `shmem_overrun`, `dsm_leak`, `use_after_reset`, `context_bloat` |
-| `context_name` | `text` | Name of the `MemoryContext` involved, if applicable |
-| `detail` | `text` | Human-readable description of the violation |
-| `query` | `text` | The query text active when the violation was detected |
-| `detected_at` | `timestamptz` | Wall clock time of detection |
+| `id` | `int` | Auto-incrementing violation ID |
+| `ts` | `timestamptz` | Timestamp of the violation |
 | `backend_pid` | `int` | PID of the backend that detected the violation |
-
-**Notes:**
-- The ring buffer is bounded by `pg_ext_memcheck.log_size`. When full, oldest entries are overwritten. Call `flush_violations()` regularly to avoid data loss.
-- Returns zero rows if no violations have been detected since the last flush.
+| `check_type` | `text` | Type of the check that detected the violation like context_leak, wrong_context, etc. |
+| `severity` | `text` | Severity of the violation like CRITICAL, WARNING, INFO etc. |
+| `detail` | `text` | Human-readable description of the violation |
 
 ---
 
 ## ext_memcheck.begin()
 
-Opens a manual test window and sets the instrumentation mode. A snapshot of the `MemoryContext` tree is taken immediately. All violations detected until `ext_memcheck.end()` is called are attributed to this window.
+Opens a manual test window and sets the `pg_ext_memcheck.memcheck_mode` mode based to the provided target. 
 
 ```sql
 SELECT ext_memcheck.begin('executor');  -- check executor phase only
@@ -53,19 +60,19 @@ Use this when you want finer-grained control than the automatic executor-hook wi
 ```sql
 SELECT ext_memcheck.begin('executor');
 
--- Run several operations you want to check together
-SELECT my_ext.func_a();
-SELECT my_ext.func_b();
+-- Run some queries or operations here,
+-- that you want to test for leaks or other violations.
 
 SELECT * FROM ext_memcheck.end();
-SELECT * FROM ext_memcheck.flush_violations();
 ```
 
 ---
 
 ## ext_memcheck.end()
 
-Closes the current manual test window and returns any violations detected during the window directly as a result set.
+Closes the current manual test window by setting `pg_ext_memcheck.memcheck_mode` to `'none'` and returns any violations detected during the window directly as a result set. 
+
+But do not flush the ring buffer into the `violation_log` table — violations remain there until you call `ext_memcheck.flush_violations()`. This allows you to inspect the violations in more detail or join them with other tables before flushing.
 
 ```sql
 SELECT * FROM ext_memcheck.end();
@@ -73,13 +80,13 @@ SELECT * FROM ext_memcheck.end();
 
 **Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)`
 
-The mode is reset to `NONE` after this call. Call `ext_memcheck.flush_violations()` afterwards to also persist any ring-buffer entries to the `violation_log` table.
+Call `SELECT ext_memcheck.flush_violations()` afterwards to also persist any ring-buffer entries to the `violation_log` table.
 
 ---
 
 ## ext_memcheck.run_scenario()
 
-Runs a named stress scenario and returns a summary message. Violations are written to the shared ring buffer; call `ext_memcheck.flush_violations()` to read them.
+Runs a named **stress scenario**. Violations are written to the shared ring buffer; call `ext_memcheck.flush_violations()` to read them by flushing the buffer.
 
 ```sql
 SELECT ext_memcheck.run_scenario('growth_benchmark', 200);
@@ -123,15 +130,15 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 -- Check only executor-phase allocations (default for focused testing)
 SET pg_ext_memcheck.memcheck_mode = 'executor';
 
--- Check all phases: planner, executor, and utility commands
+-- Check all phases: planner + executor
 SET pg_ext_memcheck.memcheck_mode = 'all';
 ```
 
 | Value | Hooks active | When to use |
 |---|---|---|
 | `none` | None | Disable the extension without unloading it; zero runtime overhead. |
-| `executor` | `ExecutorStart`, `ExecutorEnd` | Focused testing of a specific extension function. Least noise. |
-| `all` | Planner + executor + utility | Full sweep — catches leaks that happen during planning or in DDL handlers. |
+| `executor` | `ExecutorStart`, `ExecutorEnd` | Focused testing of Executor phase allocations. |
+| `all` | Planner `planner_hook` + Executor `ExecutorEnd` | Full sweep — catches leaks that happen during planning and execution. |
 
 **Recommended workflow:**
 

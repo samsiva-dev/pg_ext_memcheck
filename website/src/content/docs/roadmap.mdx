@@ -16,7 +16,7 @@ Phase 1 focuses on the bugs that hurt extension authors most often and that no e
 - **Context leak detection** via before/after tree snapshots across query execution
 - **Wrong-context allocation detection** — palloc() calls that accidentally land in `TopMemoryContext` or `CacheMemoryContext`
 - **SQL-queryable violation log** — all detected violations are written to a shared ring buffer and exposed via `ext_memcheck.flush_violations()`
-- **Session-level control API** — `memcheck.begin()` / `memcheck.end()` to bracket test windows manually
+- **Session-level control API** — `memcheck.begin()` / `memcheck.end()` / `memcheck.run_scenario()` to bracket test windows manually
 
 ## Phase 2 scope
 

@@ -50,22 +50,22 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 ## What it detects
 
 <CardGrid>
-  <Card title="Context leaks" icon="warning">
+  <Card title="✅ Context leaks" icon="warning">
     Snapshots the `MemoryContext` tree before and after a query, then diffs it to surface contexts that were created but never freed.
   </Card>
-  <Card title="Wrong-context allocations" icon="error">
+  <Card title="✅ Wrong-context allocations" icon="error">
     Flags `palloc()` calls that land in long-lived contexts like `TopMemoryContext` or `CacheMemoryContext` when they should be query-local.
   </Card>
-  <Card title="Shmem overruns" icon="information">
+  <Card title="⬜ Shmem overruns" icon="information">
     Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
   </Card>
-  <Card title="DSM lifecycle" icon="document">
+  <Card title="⬜ DSM lifecycle" icon="document">
     Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
   </Card>
-  <Card title="Use-after-reset" icon="setting">
+  <Card title="⬜ Use-after-reset" icon="setting">
     Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
   </Card>
-  <Card title="Context bloat" icon="approve-check-circle">
+  <Card title="✅ Context bloat" icon="approve-check-circle">
     Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
   </Card>
 </CardGrid>

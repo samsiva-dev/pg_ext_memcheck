@@ -47,46 +47,51 @@ In `EXECUTOR` mode only the executor hooks are active. In `ALL` mode the planner
 
 ### context_walker.c
 
-Recursively walks the `MemoryContext` tree rooted at `TopMemoryContext` using `MemoryContextData` internals. Produces a flat array of `ContextNode` records:
+Recursively walks the `MemoryContext` tree rooted at `TopMemoryContext`. Produces a `CtxTree` node which hold the array of `CtxSnapshot` entries for all contexts in the tree, along with their parent-child relationships. Snapshots are taken both before and after the test window, and then compared to find leaks and bloats:
 
 ```c
-typedef struct ContextNode {
-    char        name[NAMEDATALEN];
-    MemoryContext addr;          /* pointer identity */
-    Size        totalSpace;
-    Size        freeSpace;
-    int         depth;
-} ContextNode;
+// One entry per context in the tree
+typedef struct CtxSnapshot {
+    char   name[NAMEDATALEN];
+    Size   totalAllocated;
+    Size   totalFree;
+    int    depth;           /* depth in tree */
+    Oid    parentHash;      /* hash of parent name+depth for diff */
+} CtxSnapshot;
+
+// Context Tree Structure
+typedef struct CtxTree {
+    CtxSnapshot *entries;
+    int          count;
+    int          capacity;
+} CtxTree;
 ```
 
-**Diff algorithm:** After a query, the post-snapshot is compared against the pre-snapshot by `addr` (pointer identity). Contexts in post but not pre → `context_leak`. Contexts in both with monotonically increasing `totalSpace` across iterations → `context_bloat`.
-
-Named context matching uses `strcmp` on `name` as a fallback for contexts that are recreated between snapshots (same name, different pointer).
+**Diff algorithm:** After a query, the post-snapshot is compared against the pre-snapshot. Contexts in post but not pre → `context_leak`. Contexts in both with monotonically increasing `totalAllocated` across iterations → `context_leak`.
 
 ---
 
 ### violation_log.c
 
-Manages a fixed-size ring buffer in shared memory, protected by a single `LWLock`. Consumers call `flush_violations()` to drain the buffer into the `ext_memcheck.violations` table.
+Manages a fixed-size ring buffer (`256`) in shared memory, protected by a single `LWLock`. Consumers call `flush_violations()` to drain the buffer into the `ext_memcheck.violation_log` table.
 
 ```c
 typedef struct ViolationEntry {
-    ViolationType type;
-    char          context_name[NAMEDATALEN];
-    char          detail[512];
-    char          query[1024];
-    TimestampTz   detected_at;
+    TimestampTz   ts;
     int           backend_pid;
+    char          check_type[32];      // e.g., "context_leak", "wrong_ctx_alloc", etc.
+    char          severity[16];        // e.g., "ERROR", "WARNING", "INFO", "OK"
+    char          detail[256];         // Detailed message about the violation
 } ViolationEntry;
 ```
 
-Buffer capacity is set by `pg_ext_memcheck.log_size` at startup. When full, oldest entries are overwritten (oldest-first eviction). This is intentional: recent violations are more actionable.
+**Buffer capacity is hard set to 256 at startup**. When full, oldest entries are overwritten (oldest-first eviction). This is intentional: recent violations are more actionable.
 
 ---
 
 ### gucs.c
 
-Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable` / `DefineCustomIntVariable`. Parameters take effect immediately except `log_size`, which is read only at shared memory initialization (`_PG_init`).
+Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable` / `DefineCustomIntVariable`.
 
 ---
 
@@ -114,27 +119,20 @@ A `BackgroundWorker` process that accepts scenario run requests via a shared mes
 Client backend
   │
   ├─ SELECT memcheck.begin();
-  │       └─ context_walker: pre-snapshot → stored in local memory
+  │       └─ sets memcheck_mode to 'executor' or 'all'
   │
-  ├─ SELECT my_ext.some_function('arg');
-  │       └─ executor hooks fire around this query
+  ├─ SELECT memcheck.run_scenario('growth_benchmark', 200);
   │
   ├─ SELECT memcheck.end();
   │       ├─ context_walker: post-snapshot
   │       ├─ diff: pre vs. post → violations found
   │       └─ violation_log: entries written to ring buffer (LWLock)
-  │
+  OR
   └─ SELECT * FROM ext_memcheck.flush_violations();
-          ├─ violation_log: drain ring buffer → INSERT into violations table
+          ├─ violation_log: drain ring buffer → INSERT into violation_log table
           └─ RETURN violations to client
 ```
 
 ## PostgreSQL version compatibility
 
-| PG Version | Status |
-|---|---|
-| 14 | Supported (primary target) |
-| 15 | Supported |
-| 16 | Supported |
-| 17 | Under verification |
-| ≤ 13 | Not supported (`MemoryContextData` layout differs) |
+PostgreSQL `15+` is supported.
