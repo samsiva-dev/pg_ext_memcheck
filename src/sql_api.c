@@ -39,8 +39,8 @@
 #include "include/memcheck_hooks.h"
 
 // Static function declarations
-static void run_growth_benchmark(int iterations);
-static void run_tx_abort_loop(int iterations);
+static void run_growth_benchmark(int iterations, const char *workload);
+static void run_tx_abort_loop(int iterations, const char *workload);
 
 /*
  * memcheck_begin -- SQL-callable function to start a memory check session.
@@ -158,18 +158,21 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     char *scenario_str = text_to_cstring(scenario_text);
     // Default iterations, can be overridden by argument
     int iterations = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100; 
+    text *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
+    char *workload_str = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
 
     // Placeholder for actual scenario execution logic
     elog(INFO, "Running memory check scenario: %s", scenario_str); 
     elog(INFO, "Iterations: %d", iterations);
+    elog(INFO, "Workload: %s", workload_str);
 
     CtxTree *before_snapshot_tree = snapshot_context_tree(TopMemoryContext); 
     memcheck_in_internal_query = true; // Set flag to indicate we're running an internal scenario query
 
     if (strcmp(scenario_str, "growth_benchmark") == 0) {
-        run_growth_benchmark(iterations);
+        run_growth_benchmark(iterations, workload_str);
     } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
-        run_tx_abort_loop(iterations);
+        run_tx_abort_loop(iterations, workload_str);
     } else {
         elog(ERROR, "Unknown scenario: %s", scenario_str);
     }
@@ -190,7 +193,7 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 }
 
 static void 
-run_growth_benchmark(int iterations) {
+run_growth_benchmark(int iterations, const char *workload) {
     if (iterations <= 0) {
         elog(ERROR, "Iterations must be a positive integer");
         return;
@@ -202,7 +205,7 @@ run_growth_benchmark(int iterations) {
     }
 
     for (int i = 0; i < iterations; i++) {
-        int ret = SPI_execute("SELECT 1", true, 0);
+        int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT) {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
             SPI_finish();
@@ -214,7 +217,7 @@ run_growth_benchmark(int iterations) {
 }
 
 static void 
-run_tx_abort_loop(int iterations) {
+run_tx_abort_loop(int iterations, const char *workload) {
     if (iterations <= 0) {
         elog(ERROR, "Iterations must be a positive integer");
         return;
@@ -234,7 +237,7 @@ run_tx_abort_loop(int iterations) {
             return;
         }
 
-        ret = SPI_execute("SELECT 1", true, 0);
+        ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT) {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
             SPI_finish();

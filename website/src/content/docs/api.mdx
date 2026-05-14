@@ -96,8 +96,8 @@ Call `SELECT ext_memcheck.flush_violations()` afterwards to also persist any rin
 Runs a named **stress scenario**. Violations are written to the shared ring buffer; call `ext_memcheck.flush_violations()` to read them by flushing the buffer.
 
 ```sql
-SELECT ext_memcheck.run_scenario('growth_benchmark', 200);
-SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
+SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 200, workload := 'SELECT 1');
+SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations := 50, workload := 'SELECT 1');
 ```
 
 **Parameters:**
@@ -106,6 +106,7 @@ SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
 |---|---|---|---|
 | `scenario_name` | `text` | — | Scenario name. Currently available: `growth_benchmark`, `tx_abort_loop`. See [Stress Scenarios](/scenarios/). |
 | `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
+| `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
 
 **Returns:** `text` — confirmation message.
 

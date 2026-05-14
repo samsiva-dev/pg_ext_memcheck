@@ -129,7 +129,7 @@ The table below also shows what Valgrind covers for the same area, to make the c
 | Use-after-reset simulation | ✅ | ⚠️ Only if reset causes actual deallocation (not always) | Force reset of target context, re-invoke extension |
 | Context bloat over repeated calls | ✅ | ❌ No | Measure size growth across N invocations |
 | Named context identification | ✅ | ❌ No | Match by context name string in tree walk |
-| SQL-level test harness | ✅ | ❌ No | `memcheck.begin()` / `memcheck.end()` / `run_scenario()` |
+| SQL-level test harness | ✅ | ❌ No | `ext_memcheck.begin()` / `ext_memcheck.end()` / `ext_memcheck.run_scenario()` |
 | Background worker crash isolation | ✅ | ❌ No | Fork worker to isolate crash-inducing tests |
 | Raw heap buffer overflow | ❌ | ✅ Primary strength — use Valgrind/ASan | Out of scope by design |
 | Use-after-free (raw malloc/free) | ❌ | ✅ Use Valgrind/ASan | Out of scope by design |
@@ -145,7 +145,7 @@ These are explicitly excluded. Do not design for them.
 |---|---|
 | Raw C heap corruption outside palloc | **This is Valgrind/ASan territory.** We operate only inside PG's allocator. Use both tools together. |
 | Uninitialized memory reads | **This is Valgrind territory** (`--track-origins=yes`). Not PG-context-specific. |
-| Production monitoring / always-on mode | Sentinel writes and context hooks add measurable overhead. Requires explicit `memcheck.begin()`. |
+| Production monitoring / always-on mode | Sentinel writes and context hooks add measurable overhead. Requires explicit `ext_memcheck.begin()`. |
 | Multi-node / Citus / distributed shard memory | Coordinator-only scope; cross-node memory tracking requires distributed tracing infrastructure |
 | GPU / accelerator memory | Out of PostgreSQL backend scope entirely |
 | Extension ABI compatibility checking | Separate concern; that's for pg_upgrade / extension versioning tooling |
@@ -238,7 +238,7 @@ Extension does not leak a context per se, but reuses a context without ever rese
                              │
                     SQL Interface Layer
               ┌──────────────┴──────────────┐
-              │   memcheck schema            │
+              │   ext_memcheck schema            │
               │   begin() / end()            │
               │   run_scenario()             │
               │   report view                │
@@ -379,7 +379,7 @@ static char    target_ext[NAMEDATALEN];
 static CtxTree *snapshot_before = NULL;
 ```
 
-On `ExecutorStart`: if `memcheck_active` and the query is not a memcheck internal query, take the before-snapshot.  
+On `ExecutorStart`: if `memcheck_active` and the query is not a `ext_memcheck` internal query, take the before-snapshot.  
 On `ExecutorEnd`: take after-snapshot, run diff, write violations.
 
 ---
@@ -398,39 +398,39 @@ Responsibility: Launch a `BackgroundWorker` to run crash-inducing tests (use-aft
 
 ## 7. SQL API Design
 
-All functions live in the `memcheck` schema.
+All functions live in the `ext_memcheck` schema.
 
 ```sql
 -- Start a test session targeting an extension by context name pattern
-SELECT memcheck.begin(
+SELECT ext_memcheck.begin(
     ext_context_pattern TEXT,   -- e.g. 'MyExtCtx%'
     options             JSONB   -- optional: {"track_shmem": true, "track_dsm": true}
 );
 
 -- End the test session and return all findings
-SELECT * FROM memcheck.end();
+SELECT * FROM ext_memcheck.end();
 -- Returns: check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ
 
 -- Run a named stress scenario
-SELECT * FROM memcheck.run_scenario(
+SELECT * FROM ext_memcheck.run_scenario(
     scenario_name TEXT,         -- e.g. 'context_reset_storm'
     ext_context_pattern TEXT,
     params JSONB                -- scenario-specific params: workers, iterations, etc.
 );
 
 -- Query the full violation log (across all sessions)
-SELECT * FROM memcheck.violations
+SELECT * FROM ext_memcheck.violations
 ORDER BY ts DESC
 LIMIT 100;
 
 -- Clear the violation log
-SELECT memcheck.clear_log();
+SELECT ext_memcheck.clear_log();
 
 -- List available scenarios
-SELECT * FROM memcheck.scenarios;
+SELECT * FROM ext_memcheck.scenarios;
 ```
 
-**`memcheck.violations` view columns:**
+**`ext_memcheck.violations` view columns:**
 
 | Column | Type | Notes |
 |---|---|---|
@@ -543,7 +543,7 @@ Deliver these and only these for the first working version.
 | Feature | Module | Effort |
 |---|---|---|
 | Context tree snapshot + diff | `context_walker.c` | Medium |
-| `memcheck.begin()` / `memcheck.end()` SQL API | `memcheck_hooks.c` + SQL | Small |
+| `ext_memcheck.begin()` / `ext_memcheck.end()` SQL API | `memcheck_hooks.c` + SQL | Small |
 | Violation log (in-memory, single backend first) | `violation_log.c` | Small |
 | Wrong-context allocation detection | `memcheck_hooks.c` | Medium |
 | Basic regress test (self-test: `pg_ext_memcheck` checks itself) | `test/regress/` | Small |
@@ -583,15 +583,15 @@ These are planned but not in scope for MVP.
 ## 14. Open Questions
 
 1. **How to handle extensions that intentionally use `TopMemoryContext`** (e.g., caching data across queries)?  
-   → Need an allowlist mechanism: `memcheck.begin(..., allowed_contexts := ARRAY['TopMemoryContext'])`.
+   → Need an allowlist mechanism: `ext_memcheck.begin(..., allowed_contexts := ARRAY['TopMemoryContext'])`.
 
-2. **Should `memcheck.end()` auto-rollback the test session if it detects errors?**  
+2. **Should `ext_memcheck.end()` auto-rollback the test session if it detects errors?**  
    → Probably yes — prevent corrupt state from leaking into the user's session.
 
 3. **PG18 AIO** uses `IoMethodOps` and async context patterns. Does the context walker handle async I/O contexts correctly?  
    → Needs investigation once PG18 async context layout is finalized.
 
-4. **Should the tool ship with a test extension** (`memcheck_test_ext`) that has known bugs for regression testing?  
+4. **Should the tool ship with a test extension** (`ext_memcheck_test_ext`) that has known bugs for regression testing?  
    → Strongly preferred. A deliberately buggy extension lets us write deterministic regress tests.
 
 5. **`MemoryContextStats()` vs manual tree walk?**  

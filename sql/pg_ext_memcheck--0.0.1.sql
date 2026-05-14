@@ -43,8 +43,9 @@ AS 'pg_ext_memcheck', 'memcheck_end'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION ext_memcheck.run_scenario(
-    senario_name TEXT,
-    iterations INTEGER DEFAULT 100
+    scenario_name TEXT,
+    iterations INTEGER DEFAULT 100,
+    workload TEXT DEFAULT 'SELECT 1'
 )
 RETURNS TEXT
 AS 'pg_ext_memcheck', 'memcheck_run_scenario'
@@ -56,3 +57,11 @@ LANGUAGE SQL
 AS $$
 DELETE FROM ext_memcheck.violation_log;
 $$;
+
+-- Scenarios view
+CREATE VIEW ext_memcheck.scenarios AS
+SELECT * FROM (
+    VALUES
+    ('growth_benchmark', 'Measures context size growth over N invocations'),
+    ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup')
+) AS scenarios(name, description);
