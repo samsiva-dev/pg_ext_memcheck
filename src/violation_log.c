@@ -34,7 +34,7 @@
 
 // Logs a violation to the shared ViolationLog with the given details. Thread-safe via LWLock.
 void
-violation_log_write(const char *check_type, const char *severity, const char *detail)
+violation_log_write(const char *check_type, const char *severity, const char *detail, const char *source_lib)
 {
     // violation_log should have been initialized in the shmem_startup_hook
     if (violation_log == NULL)
@@ -56,6 +56,13 @@ violation_log_write(const char *check_type, const char *severity, const char *de
     entry->severity[sizeof(entry->severity) - 1] = '\0';
     strncpy(entry->detail, detail, sizeof(entry->detail) - 1);
     entry->detail[sizeof(entry->detail) - 1] = '\0';
+    if (source_lib != NULL)
+    {
+        strncpy(entry->source_lib, source_lib, sizeof(entry->source_lib) - 1);
+        entry->source_lib[sizeof(entry->source_lib) - 1] = '\0';
+    }
+    else
+        entry->source_lib[0] = '\0';
 
     // Update the head position
     violation_log->head = (violation_log->head + 1) % VIOLATION_LOG_SIZE;
@@ -130,21 +137,22 @@ violation_log_flush(PG_FUNCTION_ARGS)
         if (e->check_type[0] == '\0')
             continue;
 
-        Oid     argtypes[5] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID };
-        Datum   values[5];
-        char    nulls[5]    = { ' ', ' ', ' ', ' ', ' ' };
+        Oid     argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
+        Datum   values[6];
+        char    nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
 
         values[0] = TimestampTzGetDatum(e->ts);
         values[1] = Int32GetDatum(e->backend_pid);
         values[2] = CStringGetTextDatum(e->check_type);
         values[3] = CStringGetTextDatum(e->severity);
         values[4] = CStringGetTextDatum(e->detail);
+        values[5] = CStringGetTextDatum(e->source_lib);
 
         ret = SPI_execute_with_args(
             "INSERT INTO ext_memcheck.violation_log "
-            "    (ts, backend_pid, check_type, severity, detail) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            5, argtypes, values, nulls, false, 0);
+            "    (ts, backend_pid, check_type, severity, detail, source_lib) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            6, argtypes, values, nulls, false, 0);
 
         if (ret != SPI_OK_INSERT)
             elog(ERROR, "pg_ext_memcheck: INSERT failed (SPI error %d)", ret);

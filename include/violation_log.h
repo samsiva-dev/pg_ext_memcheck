@@ -17,6 +17,7 @@ typedef struct ViolationEntry {
     char          check_type[32];      // e.g., "context_leak", "wrong_ctx_alloc", etc.
     char          severity[16];        // e.g., "ERROR", "WARNING", "INFO", "OK"
     char          detail[256];         // Detailed message about the violation
+    char          source_lib[64];      // basename of the .so that installed the leaking hook
 } ViolationEntry;
 
 // ViolationLog is a shared-memory structure that holds a circular buffer of ViolationEntry records.
@@ -28,7 +29,7 @@ typedef struct ViolationLog {
 } ViolationLog;
 
 // Helper functions to log violations
-extern void violation_log_write(const char *check_type, const char *severity, const char *detail);
+extern void violation_log_write(const char *check_type, const char *severity, const char *detail, const char *source_lib);
 extern ViolationEntry *violation_log_read_all(void);
 
 // SQL-callable: flush shared-memory ring buffer into ext_memcheck.violation_log

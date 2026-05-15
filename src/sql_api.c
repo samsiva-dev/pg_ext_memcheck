@@ -97,18 +97,19 @@ memcheck_end(PG_FUNCTION_ARGS)
 
     {
         MemoryContext    oldcontext;
-        Datum            values[4];
-        bool             nulls[4] = {false, false, false, false};
+        Datum            values[5];
+        bool             nulls[5] = {false, false, false, false, false};
 
         /* All tuplestore/descriptor allocations must live in per-query memory */
         oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
 
         /* Build and bless a tuple descriptor for the result set */
-        tupdesc = CreateTemplateTupleDesc(4);
+        tupdesc = CreateTemplateTupleDesc(5);
         TupleDescInitEntry(tupdesc, (AttrNumber) 1, "check_type", TEXTOID, -1, 0);
         TupleDescInitEntry(tupdesc, (AttrNumber) 2, "severity", TEXTOID, -1, 0);
         TupleDescInitEntry(tupdesc, (AttrNumber) 3, "detail", TEXTOID, -1, 0);
         TupleDescInitEntry(tupdesc, (AttrNumber) 4, "ts", TIMESTAMPTZOID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 5, "source_lib", TEXTOID, -1, 0);
         BlessTupleDesc(tupdesc);
 
         tupstore = tuplestore_begin_heap(true, false, work_mem);
@@ -131,6 +132,7 @@ memcheck_end(PG_FUNCTION_ARGS)
                 values[1] = CStringGetTextDatum(e->severity);
                 values[2] = CStringGetTextDatum(e->detail);
                 values[3] = TimestampTzGetDatum(e->ts);
+                values[4] = CStringGetTextDatum(e->source_lib);
 
                 tuplestore_putvalues(tupstore, tupdesc, values, nulls);
             }

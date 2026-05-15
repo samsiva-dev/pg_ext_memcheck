@@ -33,6 +33,7 @@ export default defineConfig({
 						{ label: 'SQL API', slug: 'api' },
 						{ label: 'Stress Scenarios', slug: 'scenarios' },
 						{ label: 'Architecture', slug: 'architecture' },
+						{ label: 'Testing a Leaky Extension', slug: 'testing-buggy-extensions' },
 					],
 				},
 			],

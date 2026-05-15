@@ -171,10 +171,13 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
             }
         }
 
-        if (before_snapshot == NULL)
-            continue;   /* new context — not in before; skip for diff */
-
-        before_matched[matched_j] = true;
+        /* New context (not in before): treat baseline as 0 so its full
+         * allocation is visible to analyze_and_log_diff.  This matters for
+         * MEMCHECK_ALL where before_snapshot is taken pre-planning and
+         * planner-born contexts that grow during execution would otherwise
+         * be silently dropped. */
+        if (before_snapshot != NULL && before_matched != NULL)
+            before_matched[matched_j] = true;
 
         if (count >= capacity)
         {
@@ -187,9 +190,9 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
 
         CtxDiff *diff = &diffs[count++];
         snprintf(diff->name, NAMEDATALEN, "%s", after_snapshot->name);
-        diff->beforeAllocated = before_snapshot->totalAllocated;
+        diff->beforeAllocated = (before_snapshot != NULL) ? before_snapshot->totalAllocated : 0;
         diff->afterAllocated  = after_snapshot->totalAllocated;
-        diff->beforeFree      = before_snapshot->totalFree;
+        diff->beforeFree      = (before_snapshot != NULL) ? before_snapshot->totalFree : 0;
         diff->afterFree       = after_snapshot->totalFree;
         diff->depth           = after_snapshot->depth;
     }

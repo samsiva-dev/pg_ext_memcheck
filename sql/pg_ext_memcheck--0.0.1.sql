@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS ext_memcheck.violation_log (
     backend_pid INTEGER NOT NULL,
     check_type TEXT NOT NULL,
     severity TEXT NOT NULL,
-    detail TEXT NOT NULL
+    detail TEXT NOT NULL,
+    source_lib TEXT NOT NULL DEFAULT ''
 );
 
 /*
@@ -38,7 +39,7 @@ AS 'pg_ext_memcheck', 'memcheck_begin'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION ext_memcheck.end()
-RETURNS TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)
+RETURNS TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT)
 AS 'pg_ext_memcheck', 'memcheck_end'
 LANGUAGE C STRICT;
 

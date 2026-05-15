@@ -39,6 +39,7 @@ SELECT * FROM ext_memcheck.violation_log;
 | `check_type` | `text` | Type of the check that detected the violation like context_leak, wrong_context, etc. |
 | `severity` | `text` | Severity of the violation like CRITICAL, WARNING, INFO etc. |
 | `detail` | `text` | Human-readable description of the violation |
+| `source_lib` | `text` | The library that triggered the violation (e.g., buggy_pg_ext) |
 
 ### Severity levels
 | Level | Memory Leak Size |
@@ -85,7 +86,7 @@ But do not flush the ring buffer into the `violation_log` table — violations r
 SELECT * FROM ext_memcheck.end();
 ```
 
-**Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ)`
+**Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT)` — all violations detected during the test window.
 
 Call `SELECT ext_memcheck.flush_violations()` afterwards to also persist any ring-buffer entries to the `violation_log` table.
 

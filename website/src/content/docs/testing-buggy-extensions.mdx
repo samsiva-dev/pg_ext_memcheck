@@ -1,0 +1,105 @@
+---
+title: Testing a Leaky Extension
+description: Learn how to test extensions with memory leaks using pg_ext_memcheck.
+---
+
+This page shows how to use pg_ext_memcheck to test an extension with known memory leaks or wrong-context allocations. It also explains how to interpret the results and severity levels.
+
+For this example, we will using a buggy extension that allocates memory but forgets to free it, and also allocates in the wrong context. You can find the source code for this extension at: [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).
+
+What buggy-pg-ext does:
+1. Allocates `8KB` for each query in a child content under 'MessageContext' in the Planner Hook but never frees it → should trigger a `context_leak` violation.
+2. Allocates `8KB` directly in `TopMemoryContext` in the Executor Hook for each query → should trigger a `wrong_ctx_alloc` violation.
+3. It does only allocates and return. No other logic is present, so it won't cause any functional test failures — just memory leaks.
+
+## Setting up the test
+1. Install the buggy extension in your PostgreSQL instance from [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).
+2. Load pg_ext_memcheck in `shared_preload_libraries` and restart PostgreSQL.
+3. Enable the extension in your test session and set `pg_ext_memcheck.memcheck_mode` to `all` to capture both planner and executor phase violations.
+```sql
+CREATE EXTENSION buggy_pg_ext;
+CREATE EXTENSION pg_ext_memcheck;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+```
+
+## Running the test
+Run a simple query that invokes the buggy extension's hooks:
+```sql
+-- Any SELECT will do, as the extension's hooks run for every query
+SELECT count(*) FROM companies;
+
+SELECT * FROM ext_memcheck.flush_violations(); -- flushes the ring buffer into the violation_log table
+SELECT * FROM ext_memcheck.violation_log; -- check the persisted violation log
+```
+### Results and interpretation
+After running the query, check the violation log:
+The columns:
+1. id — auto-incrementing violation ID
+2. ts — timestamp of the violation
+3. backend_pid — PID of the backend that detected the violation
+4. check_type — type of the check that detected the violation (e.g., context_leak, wrong_ctx_alloc)
+5. severity — severity of the violation (e.g., ERROR, WARNING, INFO)
+6. detail — human-readable description of the violation
+7. source_lib — the library that triggered the violation (e.g., buggy_pg_ext)
+```sql
+ 22 | 2026-05-15 21:35:00.437495+05:30 |       62651 | context_leak | INFO     | context 'TopMemoryContext' (depth 0): used grew by 9392 bytes (before=381800 after=391192); allocated before=589216 after=589216 | buggy_pg_ext.dylib
+ 23 | 2026-05-15 21:35:00.437497+05:30 |       62651 | context_leak | INFO     | context 'MessageContext' (depth 1): used grew by 30168 bytes (before=8384 after=38552); allocated before=16384 after=55360       | buggy_pg_ext.dylib
+ 24 | 2026-05-15 21:35:00.437498+05:30 |       62651 | context_leak | INFO     | context 'BuggyPlannerLeakCtx' (depth 2): used grew by 8488 bytes (before=0 after=8488); allocated before=0 after=24576           | buggy_pg_ext.dylib
+```
+In this example, we see three `context_leak` violations:
+1. `TopMemoryContext` grew by `9392 bytes` → this is the `wrong_ctx_alloc` violation from the Executor Hook, but since it's a leak in `TopMemoryContext`, it is reported as a `context_leak` with severity `INFO` because the leak size is less than `64KB`.
+2. `MessageContext` grew by `30168 bytes` → this is the leak from the Planner Hook, reported as `context_leak` with severity `INFO`.
+3. `BuggyPlannerLeakCtx` grew by `8488 bytes` → this is the child context under `MessageContext` where the leak actually happens, also reported as `context_leak` with severity `INFO`.
+
+## Scenario - growth_benchmark 
+You can also run a more extensive scenario that executes the same query in a loop to see how the leaks accumulate over time:
+```sql
+select ext_memcheck.begin('all');
+SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT count(*) FROM companies;');
+SELECT * FROM ext_memcheck.end();
+```
+### Output
+This will run the same query 1000 times, and you should see the leak sizes grow across iterations in the violation log. The severity may escalate to `WARNING` or `ERROR` if the leak size crosses the defined thresholds. Subset of expected output:
+```sql
+ context_leak    | ERROR    | context 'TopMemoryContext' (depth 0): used grew by 8208448 bytes (before=743888 after=8952336); allocated before=1113504 after=16842144                            | 2026-05-15 21:45:45.147019+05:30 | buggy_pg_ext.dylib
+ wrong_ctx_alloc | WARNING  | context 'TopMemoryContext' (depth 0): allocated grew by 15728640 bytes in a known global context (before=1113504 after=16842144); free before=378864 after=7889808 | 2026-05-15 21:45:45.148388+05:30 | buggy_pg_ext.dylib
+ context_leak    | INFO     | context 'BuggyPlannerLeakCtx' (depth 2): used grew by 8488 bytes (before=0 after=8488); allocated before=0 after=24576                                             | 2026-05-15 21:45:45.148386+05:30 | buggy_pg_ext.dylib
+ context_leak    | WARNING  | context 'ExprContext' (depth 4): used grew by 198840 bytes (before=4480 after=203320); allocated before=8192 after=227456                                          | 2026-05-15 21:45:45.147417+05:30 | buggy_pg_ext.dylib
+ context_leak    | INFO     | context 'MessageContext' (depth 1): used grew by 26632 bytes (before=8832 after=35464); allocated before=24576 after=63552                                         | 2026-05-15 21:45:45.147987+05:30 | buggy_pg_ext.dylib
+```
+
+### Interpreting the growth_benchmark output
+
+After 1000 iterations the accumulated leaks cross multiple severity thresholds. Here is what each row tells you:
+
+1. **`context_leak ERROR` — `TopMemoryContext` grew by ~8 MB**  
+   Bug 2 in action at scale. Each iteration's `ExecutorStart` hook palloced 8 KB directly into `TopMemoryContext`. After 1000 iterations that is ~8 MB of permanently retained memory, pushing the severity to `ERROR` (>1 MiB threshold). The `before=0` for allocated in earlier single-query runs becomes significant accumulated growth here.
+
+2. **`wrong_ctx_alloc WARNING` — `TopMemoryContext` block growth ~15 MB**  
+   The same `TopMemoryContext` leak is also caught by the wrong-context checker, which fires independently on any allocation growth inside a known global context. The larger `allocated` delta (~15 MB vs ~8 MB used) reflects PostgreSQL requesting new OS-level blocks to accommodate the steady stream of pallocs.
+
+3. **`context_leak INFO` — `BuggyPlannerLeakCtx` grew by 8488 bytes**  
+   Bug 1 — the planner hook creates a child context under `MessageContext` and allocates 8 KB into it. This single entry represents the last iteration's context, which was not yet reset. Earlier iterations' contexts were freed when `MessageContext` was reset at the end of each client message cycle during the scenario loop.
+
+4. **`context_leak WARNING` — `ExprContext` grew by ~194 KB**  
+   An internal PostgreSQL expression evaluation context that accumulated state across the 1000 iterations of `SELECT count(*) FROM companies`. This is not a bug in the extension — it is normal PostgreSQL behavior under repeated execution within a single session. It surfaces here because the before-snapshot was taken before the scenario loop started and the after-snapshot is taken at `end()`.
+
+5. **`context_leak INFO` — `MessageContext` grew by ~26 KB**  
+   The parent context of `BuggyPlannerLeakCtx`. Its growth reflects the block overhead of hosting the child contexts created by Bug 1 across iterations, plus normal query message bookkeeping.
+
+#### Severity thresholds recap
+
+| Threshold | Severity |
+|-----------|----------|
+| > 1 MiB net used growth | `ERROR` |
+| > 64 KiB net used growth | `WARNING` |
+| ≥ `min_leak_bytes` (default 8 KiB) | `INFO` |
+| Below threshold | silently skipped |
+- The `TopMemoryContext` leak has grown to `8.2MB` after 1000 iterations, which is now an `ERROR`.
+- The `wrong_ctx_alloc` violation always a `WARNING` to indicate a potential issue with the extension's allocation strategy, independent of the actual leak size.
+- The `BuggyPlannerLeakCtx` remains an `INFO` because it is still under `64KB`, but you can see how it grows across iterations.
+
+## More testing options
+Now you can try with memcheck_mode set to `executor` to only capture executor-phase violations, or `none` to disable automatic hooks and use the manual `begin()` / `end()` API for more fine-grained control over the test window. You can also test with other workloads or scenarios like `tx_abort_loop`, and inspect the violation log to understand the memory behavior of your extension under different conditions. 
+
+The `source_lib` column is particularly useful to confirm that the violations are indeed coming from your extension (e.g., `buggy_pg_ext.dylib`) and not from PostgreSQL internals or other extensions.

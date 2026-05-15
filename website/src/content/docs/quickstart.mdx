@@ -86,19 +86,20 @@ A violation row looks like this:
 | `detail` | `"Context present in post-query snapshot but not pre-query"` |
 | `severity` | `warning`, `info`, `critical`, etc. |
 | `check_type` | `context_leak`, `wrong_context_allocation`, `shmem_overrun`, etc. |
+| `source_lib` | `your_extension.dylib` |
 
 ## Run a built-in stress scenario
 
 ```sql
 -- Run the growth benchmark scenario (measures context growth over repeated calls)
-SELECT ext_memcheck.run_scenario('growth_benchmark', 100);
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100, 'SELECT your_extension.some_function(''input'');');
 
 SELECT ext_memcheck.flush_violations();
 ```
 
 ```sql
 -- Run the tx_abort_loop scenario (tests memory cleanup on transaction abort)
-SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 50, 'SELECT your_extension.some_function(''input'');');
 
 SELECT ext_memcheck.flush_violations();
 ```
