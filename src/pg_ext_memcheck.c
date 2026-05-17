@@ -1,13 +1,3 @@
-/*-------------------------------------------------------------------------
- * pg_ext_memcheck
- *
- * Copyright (c) 2026, Samba Siva Reddy
- *
- * This software is released under the MIT License.
- * See LICENSE for details.
- *-------------------------------------------------------------------------
-*/
-
 /*
     pg_ext_memcheck is a PostgreSQL extension that monitors memory usage during query execution
     and detects potential memory leaks or anomalies. It uses hooks into the executor to take
@@ -31,6 +21,7 @@
 #include "include/gucs.h"
 #include "include/memcheck_hooks.h"
 #include "include/violation_log.h"
+#include "include/dsm_tracker.h"
 
 void _PG_init(void);
 void _PG_fini(void);
@@ -50,6 +41,17 @@ static void install_hooks(void);
 static void uninstall_hooks(void);
 
 ViolationLog *violation_log = NULL; // Global pointer to the shared violation log
+DsmTrackerState *dsm_tracker_state = NULL; // Global pointer to the shared DSM tracker state
+
+static void
+memcheck_proc_exit_dsm_check(int code, Datum arg)
+{
+    /*
+     * Safety-net: catch DSM segments still attached at backend exit that were
+     * not caught by an explicit memcheck_end() call.
+     */
+    dsm_tracker_check_leaks();
+}
 
 // Extension load callback
 void
@@ -64,6 +66,15 @@ _PG_init(void)
     install_hooks();
     install_executor_hooks();
     install_planner_hook();
+
+    RequestAddinShmemSpace(sizeof(ViolationLog));
+    RequestAddinShmemSpace(sizeof(DsmTrackerState));
+
+    dsm_tracker_tranche_id = LWLockNewTrancheId();
+    LWLockRegisterTranche(dsm_tracker_tranche_id, "pg_ext_memcheck_dsm_tracker");
+
+    /* Register backend-exit callback to catch leaks even without an explicit end() */
+    on_proc_exit(memcheck_proc_exit_dsm_check, (Datum) 0);
 }
 
 // Extension unload callback
@@ -118,5 +129,15 @@ static void memcheck_shmem_startup(void)
     if (!found)    {
         // First time initialization, zero out the log
         memset(violation_log, 0, sizeof(ViolationLog));
+    }
+
+    // Allocate shared memory for the DSM tracker state
+    dsm_tracker_state = (DsmTrackerState *) ShmemInitStruct("pg_ext_memcheck DsmTrackerState",
+                                                            sizeof(DsmTrackerState),
+                                                            &found);
+    if (!found) {
+        // First time initialization, zero out the tracker state
+        memset(dsm_tracker_state, 0, sizeof(DsmTrackerState));
+        LWLockInitialize(&dsm_tracker_state->lock, dsm_tracker_tranche_id);
     }
 }

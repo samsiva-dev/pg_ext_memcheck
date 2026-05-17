@@ -66,3 +66,15 @@ SELECT * FROM (
     ('growth_benchmark', 'Measures context size growth over N invocations'),
     ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup')
 ) AS scenarios(name, description);
+
+
+-- DSM tracking view
+CREATE OR REPLACE FUNCTION ext_memcheck.dsm_tracking()
+RETURNS TABLE(
+    segid BIGINT,
+    backend_pid INTEGER,
+    attach_at TIMESTAMPTZ,
+    size_bytes BIGINT,
+    detached BOOLEAN
+) AS 'pg_ext_memcheck', 'dsm_tracker_list_segments'
+LANGUAGE C STRICT;

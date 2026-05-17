@@ -1,13 +1,3 @@
-/*-------------------------------------------------------------------------
- * pg_ext_memcheck
- *
- * Copyright (c) 2026, Samba Siva Reddy
- *
- * This software is released under the MIT License.
- * See LICENSE for details.
- *-------------------------------------------------------------------------
-*/
-
 /*
     Implementation of SQL API functions for pg_ext_memcheck extension.
     This file contains the implementation of the SQL-callable functions for the pg_ext_memcheck extension.
@@ -37,6 +27,7 @@
 #include "include/violation_log.h"
 #include "include/context_walker.h"
 #include "include/memcheck_hooks.h"
+#include "include/dsm_tracker.h"
 
 // Static function declarations
 static void run_growth_benchmark(int iterations, const char *workload);
@@ -87,6 +78,9 @@ memcheck_end(PG_FUNCTION_ARGS)
     memcheck_mode = MEMCHECK_NONE;
 
     elog(INFO, "Memory check session ended.");
+
+    /* Flush any DSM leaks accumulated during this session into the violation log */
+    dsm_tracker_check_leaks();
 
     /* Verify caller can accept a set result */
     if (!rsinfo || !IsA(rsinfo, ReturnSetInfo) ||
@@ -259,3 +253,62 @@ run_tx_abort_loop(int iterations, const char *workload) {
     SPI_finish();
 }
 
+PG_FUNCTION_INFO_V1(dsm_tracker_list_segments);
+Datum
+dsm_tracker_list_segments(PG_FUNCTION_ARGS)
+{
+    if (dsm_tracker_state == NULL)
+        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
+
+    ReturnSetInfo   *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+    TupleDesc        tupdesc;
+    Tuplestorestate *tupstore;
+    int              i;
+
+    /* Verify caller can accept a set result */
+    if (!rsinfo || !IsA(rsinfo, ReturnSetInfo) ||
+        !(rsinfo->allowedModes & SFRM_Materialize))
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("set-valued function called in context that cannot accept a set")));
+
+    {
+        MemoryContext    oldcontext;
+        Datum            values[5];
+        bool             nulls[5] = {false, false, false, false, false};
+
+        /* All tuplestore/descriptor allocations must live in per-query memory */
+        oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
+
+        /* Build and bless a tuple descriptor for the result set */
+        tupdesc = CreateTemplateTupleDesc(5);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 1, "handle",       INT8OID,        -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 2, "backend_pid",  INT4OID,        -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 3, "attached_at",  TIMESTAMPTZOID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 4, "size_bytes",   INT8OID,        -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 5, "detached",     BOOLOID,        -1, 0);
+        BlessTupleDesc(tupdesc);
+
+        tupstore = tuplestore_begin_heap(true, false, work_mem);
+        rsinfo->returnMode = SFRM_Materialize;
+        rsinfo->setResult  = tupstore;
+        rsinfo->setDesc    = tupdesc;
+
+        for (i = 0; i < dsm_tracker_state->count; i++)
+        {
+            DsmSegmentRecord *r = &dsm_tracker_state->segments[i];
+
+            values[0] = Int64GetDatum((int64) r->handle);
+            values[1] = Int32GetDatum(r->backend_pid);
+            values[2] = TimestampTzGetDatum(r->attached_at);
+            values[3] = Int64GetDatum((int64) r->size_bytes);
+            values[4] = BoolGetDatum(r->detached);
+
+            tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+        }
+
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    PG_RETURN_NULL();
+}

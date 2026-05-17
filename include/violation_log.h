@@ -2,6 +2,7 @@
 #define VIOLATION_LOG_H
 
 #include "postgres.h"
+#include "fmgr.h"
 #include "datatype/timestamp.h"
 #include "storage/lwlock.h"
 
