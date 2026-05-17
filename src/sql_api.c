@@ -21,6 +21,9 @@
 #include "utils/memutils.h"
 #include "utils/tuplestore.h"
 
+// Storage Includes
+#include "storage/dsm.h"
+
 // Local Includes
 #include "include/pg_ext_memcheck.h"
 #include "include/gucs.h"
@@ -311,4 +314,44 @@ dsm_tracker_list_segments(PG_FUNCTION_ARGS)
     }
 
     PG_RETURN_NULL();
+}
+
+PG_FUNCTION_INFO_V1(dsm_tracker_handle);
+Datum
+dsm_tracker_handle(PG_FUNCTION_ARGS)
+{
+    dsm_handle handle = PG_GETARG_INT64(0);
+
+    if (dsm_tracker_state == NULL)
+        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
+
+    // Now find the segment with the matching handle from the pg and attach to
+    // dsm_tracker_state via dsm_tracker_record_attach() so it can be tracked and logged if not properly detached.
+    dsm_segment *seg = dsm_attach(handle);
+    if (seg == NULL)
+    {
+        elog(ERROR, "Failed to attach to DSM segment with handle %u", handle);
+        PG_RETURN_NULL();
+    }
+
+    Size seg_size = dsm_segment_map_length(seg);
+    dsm_tracker_record_attach(seg, seg_size);
+
+    elog(INFO, "Attached to DSM segment with handle %u, size %zu bytes", handle, seg_size);
+
+    PG_RETURN_TEXT_P(cstring_to_text("DSM segment tracked."));
+}
+
+PG_FUNCTION_INFO_V1(clear_dsm_tracking);
+Datum
+clear_dsm_tracking(PG_FUNCTION_ARGS)
+{
+    if (dsm_tracker_state == NULL)
+        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
+    
+    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
+    dsm_tracker_state->count = 0; 
+    LWLockRelease(&dsm_tracker_state->lock);    
+    elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
+    PG_RETURN_VOID();
 }

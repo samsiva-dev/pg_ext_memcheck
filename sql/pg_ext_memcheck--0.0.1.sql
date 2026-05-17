@@ -78,3 +78,15 @@ RETURNS TABLE(
     detached BOOLEAN
 ) AS 'pg_ext_memcheck', 'dsm_tracker_list_segments'
 LANGUAGE C STRICT;
+
+-- 
+CREATE OR REPLACE FUNCTION ext_memcheck.track_dsm_handle(
+    handle BIGINT
+) RETURNS TEXT
+AS 'pg_ext_memcheck', 'dsm_tracker_handle'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION ext_memcheck.clear_dsm_tracking()
+RETURNS void
+AS 'pg_ext_memcheck', 'dsm_tracker_clear'
+LANGUAGE C STRICT;
