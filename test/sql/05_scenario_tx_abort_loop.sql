@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 05_scenario_tx_abort_loop.sql
 -- Run the tx_abort_loop scenario and verify it completes without error.
 

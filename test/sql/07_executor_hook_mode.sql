@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 07_executor_hook_mode.sql
 -- Verify the executor hook fires (or does not fire) according to memcheck_mode.
 

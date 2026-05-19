@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 08_ring_buffer_overflow.sql
 -- Fill the ring buffer past its 256-entry capacity and confirm the extension
 -- does not crash (oldest entries are silently overwritten).
