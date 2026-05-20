@@ -31,8 +31,6 @@ void _PG_fini(void);
 PG_MODULE_MAGIC;
 
 // Required Hook Types and Variables
-// (Add any necessary hooks here, e.g., ExecutorStart_hook, ExecutorEnd_hook, etc.)
-static emit_log_hook_type prev_emit_log_hook = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 
@@ -99,9 +97,6 @@ install_hooks(void)
 {
     // Save previous hooks and install our hooks
 
-    prev_emit_log_hook = emit_log_hook;
-    emit_log_hook = NULL;            // TODO: Set when defined
-
     prev_shmem_request_hook = shmem_request_hook;
     shmem_request_hook = memcheck_shmem_request;
 
@@ -117,7 +112,6 @@ static void
 uninstall_hooks(void)
 {
     // Restore previous hooks
-    emit_log_hook = prev_emit_log_hook;
     shmem_request_hook = prev_shmem_request_hook;
     shmem_startup_hook = prev_shmem_startup_hook;
 }

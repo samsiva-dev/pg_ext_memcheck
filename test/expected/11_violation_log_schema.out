@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 11_violation_log_schema.sql
 -- Verify column types and constraints of ext_memcheck.violation_log.
 SET client_min_messages = WARNING;
@@ -15,7 +23,8 @@ ORDER BY ordinal_position;
  check_type  | text                     | NO
  severity    | text                     | NO
  detail      | text                     | NO
-(6 rows)
+ source_lib  | text                     | NO
+(7 rows)
 
 -- Primary key exists
 SELECT count(*) AS pk_count

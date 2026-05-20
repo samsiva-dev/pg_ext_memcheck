@@ -17,7 +17,7 @@ SET client_min_messages = WARNING;
 SET pg_ext_memcheck.memcheck_mode = 'none';
 
 -- Flush any leftover violations from previous tests
-SELECT ext_memcheck.flush_violations();
+SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
 
 -- Begin a session in 'none' mode
 SELECT ext_memcheck.begin('none');

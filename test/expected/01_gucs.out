@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 01_gucs.sql
 -- Verify GUC defaults and accept all valid values without error.
 SET client_min_messages = WARNING;

@@ -36,26 +36,28 @@ violation_log_write(const char *check_type, const char *severity, const char *de
     // Acquire lock to write to the log
     LWLockAcquire(&violation_log->lock, LW_EXCLUSIVE);
 
-    // Write the violation entry at the current head position
-    ViolationEntry *entry = &violation_log->entries[violation_log->head];
-    entry->ts = GetCurrentTimestamp();
-    entry->backend_pid = MyProcPid;
-    strncpy(entry->check_type, check_type, sizeof(entry->check_type) - 1);
-    entry->check_type[sizeof(entry->check_type) - 1] = '\0';
-    strncpy(entry->severity, severity, sizeof(entry->severity) - 1);
-    entry->severity[sizeof(entry->severity) - 1] = '\0';
-    strncpy(entry->detail, detail, sizeof(entry->detail) - 1);
-    entry->detail[sizeof(entry->detail) - 1] = '\0';
-    if (source_lib != NULL)
     {
-        strncpy(entry->source_lib, source_lib, sizeof(entry->source_lib) - 1);
-        entry->source_lib[sizeof(entry->source_lib) - 1] = '\0';
-    }
-    else
-        entry->source_lib[0] = '\0';
+        // Write the violation entry at the current head position
+        ViolationEntry *entry = &violation_log->entries[violation_log->head];
+        entry->ts = GetCurrentTimestamp();
+        entry->backend_pid = MyProcPid;
+        strncpy(entry->check_type, check_type, sizeof(entry->check_type) - 1);
+        entry->check_type[sizeof(entry->check_type) - 1] = '\0';
+        strncpy(entry->severity, severity, sizeof(entry->severity) - 1);
+        entry->severity[sizeof(entry->severity) - 1] = '\0';
+        strncpy(entry->detail, detail, sizeof(entry->detail) - 1);
+        entry->detail[sizeof(entry->detail) - 1] = '\0';
+        if (source_lib != NULL)
+        {
+            strncpy(entry->source_lib, source_lib, sizeof(entry->source_lib) - 1);
+            entry->source_lib[sizeof(entry->source_lib) - 1] = '\0';
+        }
+        else
+            entry->source_lib[0] = '\0';
 
-    // Update the head position
-    violation_log->head = (violation_log->head + 1) % VIOLATION_LOG_SIZE;
+        // Update the head position
+        violation_log->head = (violation_log->head + 1) % VIOLATION_LOG_SIZE;
+    }
 
     // Release the lock
     LWLockRelease(&violation_log->lock);
@@ -66,19 +68,22 @@ violation_log_write(const char *check_type, const char *severity, const char *de
 ViolationEntry *
 violation_log_read_all()
 {
+    ViolationEntry *entries;
+    int             i;
+
     if (violation_log == NULL)
     {
         elog(WARNING, "Violation log not initialized; cannot read violations");
         return NULL;
     }
 
-    ViolationEntry *entries = (ViolationEntry *) palloc(sizeof(ViolationEntry) * VIOLATION_LOG_SIZE);
+    entries = (ViolationEntry *) palloc(sizeof(ViolationEntry) * VIOLATION_LOG_SIZE);
 
     // Acquire lock to read from the log
     LWLockAcquire(&violation_log->lock, LW_SHARED);
 
     // Copy entries to the output array
-    for (int i = 0; i < VIOLATION_LOG_SIZE; i++)
+    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
     {
         int index = (violation_log->head + i) % VIOLATION_LOG_SIZE;
         entries[i] = violation_log->entries[index];
@@ -105,6 +110,7 @@ violation_log_flush(PG_FUNCTION_ARGS)
     ViolationEntry *entries;
     int             inserted = 0;
     int             ret;
+    int             i;
 
     entries = violation_log_read_all();
     if (entries == NULL)
@@ -119,18 +125,16 @@ violation_log_flush(PG_FUNCTION_ARGS)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
     }
 
-    for (int i = 0; i < VIOLATION_LOG_SIZE; i++)
+    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
     {
-        ViolationEntry *e = &entries[i];
+        Oid             argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
+        Datum           values[6];
+        char            nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
+        ViolationEntry *e           = &entries[i];
 
         /* Skip slots that have never been written (check_type is empty). */
         if (e->check_type[0] == '\0')
             continue;
-
-        Oid     argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
-        Datum   values[6];
-        char    nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
-
         values[0] = TimestampTzGetDatum(e->ts);
         values[1] = Int32GetDatum(e->backend_pid);
         values[2] = CStringGetTextDatum(e->check_type);

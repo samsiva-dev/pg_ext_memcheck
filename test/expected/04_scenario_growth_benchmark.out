@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 04_scenario_growth_benchmark.sql
 -- Run the growth_benchmark scenario and verify it completes without error.
 SET client_min_messages = WARNING;
@@ -13,6 +21,7 @@ DELETE FROM ext_memcheck.violation_log;
 SELECT ext_memcheck.run_scenario('growth_benchmark', 1) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 1
+INFO:  Workload: SELECT 1
  ok 
 ----
  t
@@ -22,6 +31,7 @@ INFO:  Iterations: 1
 SELECT ext_memcheck.run_scenario('growth_benchmark', 10) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 10
+INFO:  Workload: SELECT 1
  ok 
 ----
  t
@@ -31,6 +41,7 @@ INFO:  Iterations: 10
 SELECT ext_memcheck.run_scenario('growth_benchmark', 1) LIKE '%Scenario executed%' AS msg_ok;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 1
+INFO:  Workload: SELECT 1
  msg_ok 
 --------
  t
@@ -48,6 +59,7 @@ END;
 $$;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 0
+INFO:  Workload: SELECT 1
 DO $$
 BEGIN
     PERFORM ext_memcheck.run_scenario('growth_benchmark', -1);
@@ -59,4 +71,5 @@ END;
 $$;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: -1
+INFO:  Workload: SELECT 1
 SET pg_ext_memcheck.memcheck_mode = 'none';

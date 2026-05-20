@@ -154,21 +154,24 @@ memcheck_end(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(memcheck_run_scenario);
 Datum
 memcheck_run_scenario(PG_FUNCTION_ARGS)
-{   
-    text *scenario_text = PG_GETARG_TEXT_PP(0);
-    char *scenario_str = text_to_cstring(scenario_text);
-    // Default iterations, can be overridden by argument
-    int iterations = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100; 
-    text *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
-    char *workload_str = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
+{
+    text    *scenario_text = PG_GETARG_TEXT_PP(0);
+    char    *scenario_str  = text_to_cstring(scenario_text);
+    int      iterations    = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100;
+    text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
+    char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
+    CtxTree *before_snapshot_tree;
+    CtxTree *after_snapshot_tree;
+    CtxDiff *diffs;
+    int      diff_count;
+    int      i;
 
-    // Placeholder for actual scenario execution logic
-    elog(INFO, "Running memory check scenario: %s", scenario_str); 
+    elog(INFO, "Running memory check scenario: %s", scenario_str);
     elog(INFO, "Iterations: %d", iterations);
     elog(INFO, "Workload: %s", workload_str);
 
-    CtxTree *before_snapshot_tree = snapshot_context_tree(TopMemoryContext); 
-    memcheck_in_internal_query = true; // Set flag to indicate we're running an internal scenario query
+    before_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+    memcheck_in_internal_query = true;
 
     if (strcmp(scenario_str, "growth_benchmark") == 0) {
         run_growth_benchmark(iterations, workload_str);
@@ -180,13 +183,12 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
         elog(ERROR, "Unknown scenario: %s", scenario_str);
     }
 
-    memcheck_in_internal_query = false; // Reset flag after scenario execution
-    CtxTree *after_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+    memcheck_in_internal_query = false;
+    after_snapshot_tree = snapshot_context_tree(TopMemoryContext);
 
-    // Analyze differences between before and after snapshots, log any detected issues.
-    int diff_count = 0;
-    CtxDiff *diffs = diff_context_trees(before_snapshot_tree, after_snapshot_tree, &diff_count);
-    for (int i = 0; i < diff_count; i++) {
+    diff_count = 0;
+    diffs = diff_context_trees(before_snapshot_tree, after_snapshot_tree, &diff_count);
+    for (i = 0; i < diff_count; i++) {
         analyze_and_log_diff(&diffs[i]);
     }
     // Check for wrong context allocations as well
@@ -198,6 +200,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 static void
 run_shmem_sentinel_probe(int iterations, const char *workload)
 {
+    int i;
+
     if (iterations <= 0)
     {
         elog(ERROR, "Iterations must be a positive integer");
@@ -214,7 +218,7 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
         return;
     }
 
-    for (int i = 0; i < iterations; i++)
+    for (i = 0; i < iterations; i++)
     {
         int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT)
@@ -231,8 +235,9 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
     probe_check_all();
 }
 
-static void 
+static void
 run_growth_benchmark(int iterations, const char *workload) {
+    int i;
     if (iterations <= 0) {
         elog(ERROR, "Iterations must be a positive integer");
         return;
@@ -243,7 +248,7 @@ run_growth_benchmark(int iterations, const char *workload) {
         return;
     }
 
-    for (int i = 0; i < iterations; i++) {
+    for (i = 0; i < iterations; i++) {
         int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT) {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
@@ -255,8 +260,9 @@ run_growth_benchmark(int iterations, const char *workload) {
     SPI_finish();
 }
 
-static void 
+static void
 run_tx_abort_loop(int iterations, const char *workload) {
+    int i;
     if (iterations <= 0) {
         elog(ERROR, "Iterations must be a positive integer");
         return;
@@ -267,8 +273,7 @@ run_tx_abort_loop(int iterations, const char *workload) {
         return;
     }
 
-    for (int i = 0; i < iterations; i++) {
-        // Start a transaction, then immediately abort it to test memory cleanup on transaction abort.
+    for (i = 0; i < iterations; i++) {
         int ret = SPI_execute("SAVEPOINT _memcheck_sp", false, 0);
         if (ret != SPI_OK_UTILITY) {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
@@ -300,13 +305,15 @@ PG_FUNCTION_INFO_V1(dsm_tracker_list_segments);
 Datum
 dsm_tracker_list_segments(PG_FUNCTION_ARGS)
 {
-    if (dsm_tracker_state == NULL)
-        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
-
-    ReturnSetInfo   *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+    ReturnSetInfo   *rsinfo;
     TupleDesc        tupdesc;
     Tuplestorestate *tupstore;
     int              i;
+
+    if (dsm_tracker_state == NULL)
+        PG_RETURN_NULL();
+
+    rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 
     /* Verify caller can accept a set result */
     if (!rsinfo || !IsA(rsinfo, ReturnSetInfo) ||
@@ -403,21 +410,21 @@ PG_FUNCTION_INFO_V1(dsm_tracker_handle);
 Datum
 dsm_tracker_handle(PG_FUNCTION_ARGS)
 {
-    dsm_handle handle = PG_GETARG_INT64(0);
+    dsm_handle   handle   = PG_GETARG_INT64(0);
+    dsm_segment *seg;
+    Size         seg_size;
 
     if (dsm_tracker_state == NULL)
-        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
+        PG_RETURN_NULL();
 
-    // Now find the segment with the matching handle from the pg and attach to
-    // dsm_tracker_state via dsm_tracker_record_attach() so it can be tracked and logged if not properly detached.
-    dsm_segment *seg = dsm_attach(handle);
+    seg = dsm_attach(handle);
     if (seg == NULL)
     {
         elog(ERROR, "Failed to attach to DSM segment with handle %u", handle);
         PG_RETURN_NULL();
     }
 
-    Size seg_size = dsm_segment_map_length(seg);
+    seg_size = dsm_segment_map_length(seg);
 
     /*
      * Record the handle as observed (not-detached) WITHOUT registering an

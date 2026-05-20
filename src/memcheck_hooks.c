@@ -41,7 +41,17 @@ static planner_hook_type prev_planner_hook = NULL;
 static ExecutorStart_hook_type prev_executor_start_hook = NULL;
 static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
 
-/* Before-snapshot for the current (non-internal) query. */
+/* Before-snapshot for the current (non-internal) query.
+ *
+ * LIMITATION (nested queries): This is a single pointer, not a stack.  When a
+ * PL/pgSQL function (or any nested SQL invocation) triggers ExecutorStart/End
+ * recursively, the inner ExecutorEnd will pfree() before_snapshot and set it to
+ * NULL.  The outer ExecutorEnd then finds before_snapshot == NULL and silently
+ * skips analysis for the outer query.  In practice this means memory checks are
+ * only reliable for leaf (non-nested) queries within a single backend.  A future
+ * Phase 2 fix would replace this pointer with a stack (MemoryContext-allocated
+ * list) so each nesting level preserves its own before-snapshot.
+ */
 static CtxTree *before_snapshot = NULL;
 
 /*
@@ -145,9 +155,10 @@ bool memcheck_in_internal_query = false;
 
 // Helper function to determine if a context is a known global context or not
 // We will use this when we are checking for wrong context allocations.
-static bool 
+static bool
 is_global_context(const char *name) {
-    for (int i = 0; global_context_names[i] != NULL; i++) {
+    int i;
+    for (i = 0; global_context_names[i] != NULL; i++) {
         if (strcmp(name, global_context_names[i]) == 0) {
             return true;
         }
@@ -175,19 +186,21 @@ is_global_context(const char *name) {
         if P found and is_global_context(P.name):
             violation_log_write("wrong_ctx_alloc", "WARNING", detail_msg)
 */
-void 
+void
 check_wrong_context_alloc(CtxTree *before, CtxTree *after)
 {
+    int i;
+    int j;
+
     // Pass 1: growth in known global contexts
-    for (int i = 0; i < after->count; i++)
+    for (i = 0; i < after->count; i++)
     {
         CtxSnapshot *after_snapshot_entry = &after->entries[i];
+        CtxSnapshot *matched_before_snapshot_entry = NULL;
+
         if (!is_global_context(after_snapshot_entry->name))
             continue;
-
-        // Find matching entry in before by (name, depth, parentHash)
-        CtxSnapshot *matched_before_snapshot_entry = NULL;
-        for (int j = 0; j < before->count; j++)
+        for (j = 0; j < before->count; j++)
         {
             CtxSnapshot *b = &before->entries[j];
             if (b->depth == after_snapshot_entry->depth &&
@@ -217,26 +230,24 @@ check_wrong_context_alloc(CtxTree *before, CtxTree *after)
     }
 
     // Pass 2: new contexts created under a global parent
-    for (int i = 0; i < after->count; i++)
+    for (i = 0; i < after->count; i++)
     {
         CtxSnapshot *after_snapshot_entry = &after->entries[i];
-        // Check if this entry is new (not matched in before)
         bool is_new = true;
-        for (int j = 0; j < before->count; j++)
+        for (j = 0; j < before->count; j++)
         {
             CtxSnapshot *b = &before->entries[j];
             if (b->depth == after_snapshot_entry->depth &&
                 b->parentHash == after_snapshot_entry->parentHash &&
                 strcmp(b->name, after_snapshot_entry->name) == 0)
-            {                
+            {
                 is_new = false;
                 break;
             }
         }
         if (is_new)
         {
-            // Find parent P in after where ctx_compute_hash(P.name, P.depth) == A.parentHash
-            for (int j = 0; j < after->count; j++)
+            for (j = 0; j < after->count; j++)
             {
                 CtxSnapshot *P = &after->entries[j];
                 if (ctx_compute_hash(P->name, P->depth) == after_snapshot_entry->parentHash &&
@@ -405,12 +416,13 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         int      diff_count = 0;
         CtxDiff *diffs      = NULL;
         CtxTree *after      = snapshot_context_tree(TopMemoryContext);
+        int      i;
 
         // Compute the differences between before and after snapshots
         diffs = diff_context_trees(before_snapshot, after, &diff_count);
 
         /* Analyze each diff entry and write qualifying violations to shared memory */
-        for (int i = 0; i < diff_count; i++)
+        for (i = 0; i < diff_count; i++)
             analyze_and_log_diff(&diffs[i]);
 
         // Check for wrong context allocations in known global contexts and new contexts created under global parents, 

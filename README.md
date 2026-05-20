@@ -25,8 +25,8 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 - **Context leaks** — Snapshots the `MemoryContext` tree before and after a query, then diffs it to surface contexts that were created but never freed.
 - **Wrong-context allocations** — Flags `palloc()` calls that land in long-lived contexts like `TopMemoryContext` or `CacheMemoryContext` when they should be query-local.
 - **Context bloat** — Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
-- **Shmem overruns** *(Phase 2)* — Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
-- **DSM lifecycle** *(Phase 2)* — Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
+- **Shmem overruns** — Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
+- **DSM lifecycle** — Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
 - **Use-after-reset** *(Phase 2)* — Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
 
 ---
@@ -105,7 +105,7 @@ SELECT ext_memcheck.run_scenario('tx_abort_loop', 50);
 SELECT ext_memcheck.flush_violations();
 ```
 
-`growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2.
+`growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2.
 
 ---
 
@@ -152,7 +152,7 @@ pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_librar
 │          ┌────────────┼────────────┐                 │
 │          ▼            ▼            ▼                 │
 │  context_walker   shmem_probe   dsm_tracker          │
-│      (Phase 1)    (Phase 2)     (Phase 2)            │
+│      (Phase 1)    (Phase 1)     (Phase 1)            │
 │          │                                           │
 │          ▼                                           │
 │   violation_log.c  (shared ring buffer)              │
@@ -183,14 +183,15 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 | PG 14+ only | Relies on `MemoryContextData` layout introduced in PG 14 |
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
+| Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
 
 ---
 
 ## Roadmap
 
-**Phase 1 (current):** Context leak detection, wrong-context allocation detection, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
+**Phase 1 (current):** Context leak detection, wrong-context allocation detection, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
 
-**Phase 2:** Shmem sentinel probing, DSM lifecycle tracking, BGWorker crash harness, full stress scenario catalog.
+**Phase 2:** BGWorker crash harness, full stress scenario catalog.
 
 See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
 

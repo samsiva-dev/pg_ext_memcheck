@@ -13,7 +13,7 @@
 SET client_min_messages = WARNING;
 
 SET pg_ext_memcheck.memcheck_mode = 'all';
-SELECT ext_memcheck.flush_violations();
+SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
 DELETE FROM ext_memcheck.violation_log;
 
 -- Minimum iteration count (1)

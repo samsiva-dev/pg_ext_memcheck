@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 06_scenario_unknown.sql
 -- Unknown scenario names must raise an error.
 SET client_min_messages = WARNING;
@@ -12,3 +20,4 @@ END;
 $$;
 INFO:  Running memory check scenario: does_not_exist
 INFO:  Iterations: 1
+INFO:  Workload: SELECT 1

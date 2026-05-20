@@ -59,16 +59,18 @@ dsm_tracker_record_attach(dsm_segment *seg, Size size_bytes)
     }
 }
 
-void 
+void
 dsm_tracker_check_leaks(void)
 {
+    int i;
+
     if (dsm_tracker_state == NULL)
         return; /* tracker not initialized, should not happen but be defensive */
 
     // Check for any segments that are still attached and were attached by the current backend. 
     // Log a warning for each potential leak.
     LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
-    for (int i = 0; i < dsm_tracker_state->count; i++)
+    for (i = 0; i < dsm_tracker_state->count; i++)
     {
         DsmSegmentRecord *record = &dsm_tracker_state->segments[i];
         if (!record->detached && record->backend_pid == MyProcPid && record->handle != 0)
@@ -123,7 +125,8 @@ static void
 dsm_tracker_on_detach_cb(dsm_segment *seg, Datum arg)
 {
     dsm_handle handle = DatumGetUInt32(arg);
-    for (int i = 0; i < dsm_tracker_state->count; i++)
+    int        i;
+    for (i = 0; i < dsm_tracker_state->count; i++)
     {
         DsmSegmentRecord *record = &dsm_tracker_state->segments[i];
         if (record->handle == handle && record->backend_pid == MyProcPid && !record->detached)

@@ -1,13 +1,21 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 08_ring_buffer_overflow.sql
 -- Fill the ring buffer past its 256-entry capacity and confirm the extension
 -- does not crash (oldest entries are silently overwritten).
 SET client_min_messages = WARNING;
 SET pg_ext_memcheck.memcheck_mode = 'all';
 SET pg_ext_memcheck.min_leak_bytes = '0';   -- log every allocation change
-SELECT ext_memcheck.flush_violations();
- flush_violations 
-------------------
-                9
+SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
+ cleaned 
+---------
+ t
 (1 row)
 
 DELETE FROM ext_memcheck.violation_log;
@@ -15,6 +23,7 @@ DELETE FROM ext_memcheck.violation_log;
 SELECT ext_memcheck.run_scenario('growth_benchmark', 300) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 300
+INFO:  Workload: SELECT 1
  ok 
 ----
  t

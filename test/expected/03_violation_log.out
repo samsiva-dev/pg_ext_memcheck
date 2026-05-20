@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 03_violation_log.sql
 -- Tests for the violation_log ring buffer and flush_violations().
 SET client_min_messages = WARNING;
@@ -36,6 +44,7 @@ INFO:  Memory check session started with mode: all
 SELECT ext_memcheck.run_scenario('growth_benchmark', 5);
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 5
+INFO:  Workload: SELECT 1
                                              run_scenario                                              
 -------------------------------------------------------------------------------------------------------
  Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
@@ -60,6 +69,7 @@ INFO:  Memory check session started with mode: all
 SELECT ext_memcheck.run_scenario('growth_benchmark', 5);
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 5
+INFO:  Workload: SELECT 1
                                              run_scenario                                              
 -------------------------------------------------------------------------------------------------------
  Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.

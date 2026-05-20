@@ -1,3 +1,11 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
 -- 02_session_lifecycle.sql
 -- Test begin/end session lifecycle: begin returns text, end returns empty set when
 -- no monitoring has occurred in NONE mode.
@@ -5,10 +13,10 @@ SET client_min_messages = WARNING;
 -- Put extension in NONE mode so no hook fires and ring buffer stays clean
 SET pg_ext_memcheck.memcheck_mode = 'none';
 -- Flush any leftover violations from previous tests
-SELECT ext_memcheck.flush_violations();
- flush_violations 
-------------------
-                7
+SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
+ cleaned 
+---------
+ t
 (1 row)
 
 -- Begin a session in 'none' mode

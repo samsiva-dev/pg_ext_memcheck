@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # run_tests.sh — self-contained regression runner for pg_ext_memcheck
 #
-# Creates a temporary PostgreSQL 17 cluster inside test/tmp_pgdata/, runs all
-# pg_regress tests, then stops and removes the cluster on exit (pass or fail).
+# Creates a temporary PostgreSQL cluster (PG14–17) inside test/tmp_pgdata/,
+# runs all pg_regress tests, then stops and removes the cluster on exit
+# (pass or fail).
 #
 # Usage (from the project root):
 #   ./test/run_tests.sh
 #
-# Optional env overrides:  
+# Optional env overrides:
+#   PG_CONFIG   path to pg_config (default: pg_config from PATH)
 #   PGPORT      port for temp server (default: 9752)
 
 set -euo pipefail
@@ -18,12 +20,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-PG_CONFIG="${PG_CONFIG}"
+PG_CONFIG="${PG_CONFIG:-pg_config}"
 
 PG_BIN="$("$PG_CONFIG" --bindir)"
 PG_LIBDIR="$("$PG_CONFIG" --pkglibdir)"
 PG_SHAREDIR="$("$PG_CONFIG" --sharedir)"
-PG_REGRESS="$("$PG_CONFIG" --libdir)/pgxs/src/test/regress/pg_regress"
+# pg_regress may live under --libdir/pgxs (RPM/macOS) or --pkglibdir/pgxs (Debian/Ubuntu)
+_pgxs_libdir="$("$PG_CONFIG" --libdir)/pgxs/src/test/regress/pg_regress"
+_pgxs_pkglibdir="$("$PG_CONFIG" --pkglibdir)/pgxs/src/test/regress/pg_regress"
+if [ -x "$_pgxs_libdir" ]; then
+    PG_REGRESS="$_pgxs_libdir"
+elif [ -x "$_pgxs_pkglibdir" ]; then
+    PG_REGRESS="$_pgxs_pkglibdir"
+else
+    echo "ERROR: pg_regress not found (tried $\_pgxs_libdir and $_pgxs_pkglibdir)" >&2
+    exit 1
+fi
 
 PGPORT="${PGPORT:-9752}"
 PGDATA="$SCRIPT_DIR/tmp_pgdata"
@@ -48,7 +60,7 @@ trap cleanup EXIT INT TERM
 # ---------------------------------------------------------------------------
 echo "=== Building pg_ext_memcheck against $("$PG_CONFIG" --version) ==="
 cd "$ROOT_DIR"
-make all PG_CONFIG="$PG_CONFIG" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+make all PG_CONFIG="$PG_CONFIG" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 echo "=== Installing pg_ext_memcheck to $PG_LIBDIR ==="
 make install PG_CONFIG="$PG_CONFIG"
@@ -116,7 +128,8 @@ cd "$ROOT_DIR"
     09_flush_clears_buffer \
     10_min_leak_bytes_threshold \
     11_violation_log_schema \
-    12_idempotent_install
+    12_idempotent_install \
+    13_shmem_sentinel_probe
 
 echo ""
 echo "=== All regression tests passed ==="

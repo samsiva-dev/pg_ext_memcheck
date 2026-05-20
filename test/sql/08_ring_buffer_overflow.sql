@@ -14,7 +14,7 @@
 SET client_min_messages = WARNING;
 SET pg_ext_memcheck.memcheck_mode = 'all';
 SET pg_ext_memcheck.min_leak_bytes = '0';   -- log every allocation change
-SELECT ext_memcheck.flush_violations();
+SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
 DELETE FROM ext_memcheck.violation_log;
 
 -- Run enough iterations to fill the 256-slot ring buffer many times over

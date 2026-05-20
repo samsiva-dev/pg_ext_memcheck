@@ -5,7 +5,7 @@ description: Live development status for pg_ext_memcheck — what is done, in pr
 
 import ProgressTracker from '../../components/ProgressTracker.astro';
 
-pg_ext_memcheck is being built in two phases. Phase 1 delivers an MVP that handles the most common PostgreSQL-specific memory bugs via SQL-queryable violation logs. Phase 2 adds shmem probing, DSM tracking, and crash-isolated background worker testing.
+pg_ext_memcheck is being built in two phases. Phase 1 delivers an MVP that handles the most common PostgreSQL-specific memory bugs via SQL-queryable violation logs. Phase 2 adds a crash-isolated background worker and expanded stress scenario catalog.
 
 <ProgressTracker />
 
@@ -15,17 +15,17 @@ Phase 1 focuses on the bugs that hurt extension authors most often and that no e
 
 - **Context leak detection** via before/after tree snapshots across query execution
 - **Wrong-context allocation detection** — palloc() calls that accidentally land in `TopMemoryContext` or `CacheMemoryContext`
+- **Shmem sentinel probing** — sentinel bytes around shared memory allocations, verified post-invocation
+- **DSM lifecycle tracking** — attach/detach lifecycle verification to catch leaked dynamic shared memory segments
 - **SQL-queryable violation log** — all detected violations are written to a shared ring buffer and exposed via `ext_memcheck.flush_violations()`
 - **Session-level control API** — `ext_memcheck.begin()` / `ext_memcheck.end()` / `ext_memcheck.run_scenario()` to bracket test windows manually
 
 ## Phase 2 scope
 
-Phase 2 adds probes that require deeper instrumentation or process isolation:
+Phase 2 adds probes that require process isolation:
 
-- **Shmem sentinel probing** — sentinel bytes around shared memory allocations, verified post-invocation
-- **DSM tracking** — attach/detach lifecycle verification to catch leaked dynamic shared memory segments
 - **BGWorker crash harness** — run crash-inducing scenarios in an isolated background worker to protect the test session
-- **Stress scenario catalog** — 7 parameterized scenarios (reset storm, tx abort loop, concurrent backends, growth benchmark, and more)
+- **Stress scenario catalog** — expanded parameterized scenarios (reset storm, concurrent backends, and more)
 
 ## Known limitations
 
@@ -35,3 +35,4 @@ Phase 2 adds probes that require deeper instrumentation or process isolation:
 | PG 14+ only | Relies on `MemoryContextData` layout introduced in PG 14 |
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
+| Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |

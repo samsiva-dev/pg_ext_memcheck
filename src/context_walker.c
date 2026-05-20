@@ -126,6 +126,8 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
     int         count    = 0;
     int         capacity = 0;
     bool       *before_matched = NULL;
+    int         i;
+    int         j;
 
     Assert(before != NULL);
     Assert(after  != NULL);
@@ -139,14 +141,14 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
         before_matched = (bool *) palloc0(sizeof(bool) * before->count);
     }
 
-    for (int i = 0; i < after->count; i++)
+    for (i = 0; i < after->count; i++)
     {
         CtxSnapshot *after_snapshot = &after->entries[i];
         CtxSnapshot *before_snapshot = NULL;
         int          matched_j = -1;
 
         /* Match by name + depth + parentHash for stable identity. */
-        for (int j = 0; j < before->count; j++)
+        for (j = 0; j < before->count; j++)
         {
             CtxSnapshot *b = &before->entries[j];
 
@@ -178,13 +180,15 @@ diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
                 diffs = (CtxDiff *) repalloc(diffs, sizeof(CtxDiff) * capacity);
         }
 
-        CtxDiff *diff = &diffs[count++];
-        snprintf(diff->name, NAMEDATALEN, "%s", after_snapshot->name);
-        diff->beforeAllocated = (before_snapshot != NULL) ? before_snapshot->totalAllocated : 0;
-        diff->afterAllocated  = after_snapshot->totalAllocated;
-        diff->beforeFree      = (before_snapshot != NULL) ? before_snapshot->totalFree : 0;
-        diff->afterFree       = after_snapshot->totalFree;
-        diff->depth           = after_snapshot->depth;
+        {
+            CtxDiff *diff = &diffs[count++];
+            snprintf(diff->name, NAMEDATALEN, "%s", after_snapshot->name);
+            diff->beforeAllocated = (before_snapshot != NULL) ? before_snapshot->totalAllocated : 0;
+            diff->afterAllocated  = after_snapshot->totalAllocated;
+            diff->beforeFree      = (before_snapshot != NULL) ? before_snapshot->totalFree : 0;
+            diff->afterFree       = after_snapshot->totalFree;
+            diff->depth           = after_snapshot->depth;
+        }
     }
 
     if (before_matched != NULL)
