@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    name: PostgreSQL ${{ matrix.pg }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [14, 15, 16, 17]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL ${{ matrix.pg }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            postgresql-${{ matrix.pg }} \
+            postgresql-server-dev-${{ matrix.pg }}
+
+      - name: Build extension
+        run: |
+          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+          make PG_CONFIG=$PG_CONFIG
+
+      - name: Install extension
+        run: |
+          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+          sudo make PG_CONFIG=$PG_CONFIG install
+
+      - name: Run regression tests
+        run: |
+          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+          bash test/run_tests.sh
