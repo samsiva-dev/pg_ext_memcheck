@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 02_session_lifecycle.sql
 -- Test begin/end session lifecycle: begin returns text, end returns empty set when
 -- no monitoring has occurred in NONE mode.

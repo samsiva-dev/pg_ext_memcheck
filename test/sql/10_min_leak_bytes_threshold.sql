@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 10_min_leak_bytes_threshold.sql
 -- Verify the min_leak_bytes GUC filters small growth: when the threshold is
 -- very large (1 GiB), no INFO-level context_leak violations should appear

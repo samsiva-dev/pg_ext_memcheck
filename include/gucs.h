@@ -1,3 +1,12 @@
+/*-------------------------------------------------------------------------
+ * pg_ext_memcheck
+ *
+ * Copyright (c) 2026, Samba Siva Reddy
+ *
+ * This software is released under the MIT License.
+ * See LICENSE for details.
+ *-------------------------------------------------------------------------
+*/
 #ifndef GUCS_H
 #define GUCS_H
 

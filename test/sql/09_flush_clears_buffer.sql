@@ -1,3 +1,12 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+
 -- 09_flush_clears_buffer.sql
 -- After flush_violations(), the ring buffer must be cleared so that a
 -- subsequent flush returns 0 and end() returns 0 rows.
