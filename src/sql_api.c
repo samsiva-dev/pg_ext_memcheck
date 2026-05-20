@@ -31,10 +31,12 @@
 #include "include/context_walker.h"
 #include "include/memcheck_hooks.h"
 #include "include/dsm_tracker.h"
+#include "include/shmem_probe.h"
 
 // Static function declarations
 static void run_growth_benchmark(int iterations, const char *workload);
 static void run_tx_abort_loop(int iterations, const char *workload);
+static void run_shmem_sentinel_probe(int iterations, const char *workload);
 
 /*
  * memcheck_begin -- SQL-callable function to start a memory check session.
@@ -172,6 +174,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
         run_growth_benchmark(iterations, workload_str);
     } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
         run_tx_abort_loop(iterations, workload_str);
+    } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
+        run_shmem_sentinel_probe(iterations, workload_str);
     } else {
         elog(ERROR, "Unknown scenario: %s", scenario_str);
     }
@@ -189,6 +193,42 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     check_wrong_context_alloc(before_snapshot_tree, after_snapshot_tree); 
 
     PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
+}
+
+static void
+run_shmem_sentinel_probe(int iterations, const char *workload)
+{
+    if (iterations <= 0)
+    {
+        elog(ERROR, "Iterations must be a positive integer");
+        return;
+    }
+
+    /* Register sentinels for our own shmem segments (allocated with +1 byte). */
+    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog));
+    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState));
+
+    if (SPI_connect() != SPI_OK_CONNECT)
+    {
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        return;
+    }
+
+    for (int i = 0; i < iterations; i++)
+    {
+        int ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT)
+        {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+    }
+
+    SPI_finish();
+
+    /* Check all sentinels after the workload. */
+    probe_check_all();
 }
 
 static void 
@@ -340,6 +380,18 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
     elog(INFO, "Attached to DSM segment with handle %u, size %zu bytes", handle, seg_size);
 
     PG_RETURN_TEXT_P(cstring_to_text("DSM segment tracked."));
+}
+
+PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
+Datum
+shmem_probe_clear_registry(PG_FUNCTION_ARGS)
+{
+    if (probe_registry == NULL)
+        PG_RETURN_VOID();
+
+    probe_registry_clear();
+    elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
+    PG_RETURN_VOID();
 }
 
 PG_FUNCTION_INFO_V1(clear_dsm_tracking);

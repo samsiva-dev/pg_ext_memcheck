@@ -74,25 +74,65 @@ detail:         "context 'TopMemoryContext' (depth 0): allocated grew by 1024 by
 
 ## Shmem boundary sentinel probing
 
-<Aside type="note" title="Phase 2">
-  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
-</Aside>
-
 Extensions that use `ShmemAlloc()` are responsible for staying within their allocated bounds. Overruns corrupt adjacent shared memory structures silently — no segfault, just data corruption.
 
-**How it works:** `shmem_probe.c` plants a known byte pattern (sentinel) in a guard region immediately after each tracked shared memory allocation. After extension code runs, it re-reads the sentinel. A mismatch indicates an overrun.
+**How it works:** `shmem_probe.c` maintains a `ProbeRegistry` in shared memory. For each tracked segment, `probe_register()` looks up the existing `ShmemInitStruct` allocation and writes a sentinel byte (`0xDE`) at `base_ptr[declared_size]` — a position in pg_ext_memcheck's own reserved guard space (every tracked allocation is requested with `+1` extra byte). After a workload runs, `probe_check_all()` re-reads each sentinel. A mismatch logs a `shmem_overrun` violation.
+
+```sql
+-- Run the built-in sentinel probe scenario
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
+
+-- Check for overrun violations
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
+
+-- Reset the registry between test runs
+SELECT ext_memcheck.clear_shmem_registry();
+```
+
+pg_ext_memcheck will report:
+```
+violation_type: shmem_overrun
+severity:       ERROR
+detail:         "Sentinel byte overwritten past 'pg_ext_memcheck ViolationLog' (declared_size=...)"
+```
+
+**Registered segments:** `ViolationLog` and `DsmTrackerState` are registered automatically by the `shmem_sentinel_probe` scenario. Their `ShmemInitStruct` allocations are made with `+1` byte in `_PG_init` so the sentinel location is always safe to write.
 
 ---
 
 ## DSM segment lifecycle tracking
 
-<Aside type="note" title="Phase 2">
-  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
-</Aside>
-
 Dynamic Shared Memory (DSM) segments must be explicitly detached when no longer needed. Leaked segments persist until the postmaster exits, consuming shared memory pool capacity.
 
-**How it works:** `dsm_tracker.c` records every `dsm_attach()` call. At the end of a test window, it verifies that every attached segment was also detached. Unmatched attaches are logged as `dsm_leak` violations.
+**How it works:** `dsm_tracker.c` maintains a `DsmTrackerState` in shared memory — a fixed-size ring of `DsmSegmentRecord` entries protected by an LWLock. `dsm_tracker_record_attach()` is called whenever a DSM segment is explicitly tracked via `ext_memcheck.track_dsm_handle()`. At the end of a test window (`ext_memcheck.end()`), `dsm_tracker_check_leaks()` scans all recorded segments and logs any that are still attached as `dsm_leak` violations.
+
+```sql
+-- Manually register a DSM handle for lifecycle tracking
+SELECT ext_memcheck.track_dsm_handle(1234);
+
+-- Inspect currently tracked segments
+SELECT * FROM ext_memcheck.dsm_tracking();
+
+-- Clear the tracking table between runs
+SELECT ext_memcheck.clear_dsm_tracking();
+```
+
+**DSM tracking table columns:**
+
+| Column | Type | Description |
+|---|---|---|
+| `segid` | `bigint` | DSM handle (OS-level identifier) |
+| `backend_pid` | `int` | PID of the backend that attached the segment |
+| `attach_at` | `timestamptz` | When the segment was recorded |
+| `size_bytes` | `bigint` | Segment size in bytes |
+| `detached` | `boolean` | Whether a matching detach was observed |
+
+pg_ext_memcheck will report:
+```
+violation_type: dsm_leak
+severity:       WARNING
+detail:         "DSM segment handle ... was attached but not detached (size=... bytes)"
+```
 
 ---
 

@@ -33,7 +33,8 @@ REGRESS = \
 	09_flush_clears_buffer \
 	10_min_leak_bytes_threshold \
 	11_violation_log_schema \
-	12_idempotent_install
+	12_idempotent_install \
+	13_shmem_sentinel_probe
 
 REGRESS_OPTS = --inputdir=test --outputdir=test
 

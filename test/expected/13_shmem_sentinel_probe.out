@@ -1,0 +1,37 @@
+-- 13_shmem_sentinel_probe.sql
+-- Verify shmem_sentinel_probe scenario runs without error,
+-- appears in the scenarios view, and logs no shmem_overrun violations.
+SET client_min_messages = WARNING;
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                0
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+-- Scenario must run without error
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 5) IS NOT NULL AS ok;
+INFO:  Running memory check scenario: shmem_sentinel_probe
+INFO:  Iterations: 5
+INFO:  Workload: SELECT 1
+ ok 
+----
+ t
+(1 row)
+
+-- Scenario must appear in the scenarios view
+SELECT name FROM ext_memcheck.scenarios WHERE name = 'shmem_sentinel_probe';
+         name          
+-----------------------
+ shmem_sentinel_probe
+(1 row)
+
+-- No shmem_overrun violations should be logged (sentinels should be intact)
+SELECT count(*) AS overrun_count
+FROM ext_memcheck.violation_log
+WHERE check_type = 'shmem_overrun';
+ overrun_count 
+---------------
+             0
+(1 row)
+

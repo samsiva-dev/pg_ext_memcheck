@@ -22,6 +22,7 @@
 #include "include/memcheck_hooks.h"
 #include "include/violation_log.h"
 #include "include/dsm_tracker.h"
+#include "include/shmem_probe.h"
 
 void _PG_init(void);
 void _PG_fini(void);
@@ -42,6 +43,8 @@ static void uninstall_hooks(void);
 
 ViolationLog *violation_log = NULL; // Global pointer to the shared violation log
 DsmTrackerState *dsm_tracker_state = NULL; // Global pointer to the shared DSM tracker state
+ProbeRegistry *probe_registry = NULL; // Global pointer to the shared probe registry
+int shmem_probe_tranche_id = 0;
 
 static void
 memcheck_proc_exit_dsm_check(int code, Datum arg)
@@ -67,11 +70,15 @@ _PG_init(void)
     install_executor_hooks();
     install_planner_hook();
 
-    RequestAddinShmemSpace(sizeof(ViolationLog));
-    RequestAddinShmemSpace(sizeof(DsmTrackerState));
+    RequestAddinShmemSpace(sizeof(ViolationLog) + 1);
+    RequestAddinShmemSpace(sizeof(DsmTrackerState) + 1);
+    RequestAddinShmemSpace(sizeof(ProbeRegistry));
 
     dsm_tracker_tranche_id = LWLockNewTrancheId();
     LWLockRegisterTranche(dsm_tracker_tranche_id, "pg_ext_memcheck_dsm_tracker");
+
+    shmem_probe_tranche_id = LWLockNewTrancheId();
+    LWLockRegisterTranche(shmem_probe_tranche_id, "pg_ext_memcheck_shmem_probe");
 
     /* Register backend-exit callback to catch leaks even without an explicit end() */
     on_proc_exit(memcheck_proc_exit_dsm_check, (Datum) 0);
@@ -123,7 +130,7 @@ static void memcheck_shmem_startup(void)
     // Allocate shared memory for the violation log
     bool found;
     violation_log = (ViolationLog *) ShmemInitStruct("pg_ext_memcheck ViolationLog",
-                                                      sizeof(ViolationLog),
+                                                      sizeof(ViolationLog) + 1,
                                                       &found);
     
     if (!found)    {
@@ -133,11 +140,20 @@ static void memcheck_shmem_startup(void)
 
     // Allocate shared memory for the DSM tracker state
     dsm_tracker_state = (DsmTrackerState *) ShmemInitStruct("pg_ext_memcheck DsmTrackerState",
-                                                            sizeof(DsmTrackerState),
+                                                            sizeof(DsmTrackerState) + 1,
                                                             &found);
     if (!found) {
         // First time initialization, zero out the tracker state
         memset(dsm_tracker_state, 0, sizeof(DsmTrackerState));
         LWLockInitialize(&dsm_tracker_state->lock, dsm_tracker_tranche_id);
+    }
+
+    // Allocate shared memory for the shmem probe registry
+    probe_registry = (ProbeRegistry *) ShmemInitStruct("pg_ext_memcheck ProbeRegistry",
+                                                        sizeof(ProbeRegistry),
+                                                        &found);
+    if (!found) {
+        memset(probe_registry, 0, sizeof(ProbeRegistry));
+        LWLockInitialize(&probe_registry->lock, shmem_probe_tranche_id);
     }
 }
