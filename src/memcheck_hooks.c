@@ -1,13 +1,3 @@
-/*-------------------------------------------------------------------------
- * pg_ext_memcheck
- *
- * Copyright (c) 2026, Samba Siva Reddy
- *
- * This software is released under the MIT License.
- * See LICENSE for details.
- *-------------------------------------------------------------------------
-*/
-
 /*
     memcheck_hooks.c
     
@@ -42,6 +32,7 @@
 #include "include/memcheck_hooks.h"
 #include "include/context_walker.h"
 #include "include/violation_log.h"
+#include "include/dsm_tracker.h"
 
 // Planner Hooks
 static planner_hook_type prev_planner_hook = NULL;
@@ -58,7 +49,7 @@ static CtxTree *before_snapshot = NULL;
  * via dladdr().  Populated each time we take a before-snapshot so that every
  * violation written during that query carries attribution.
  */
-static char active_hook_libs[128] = "";
+char active_hook_libs[128] = "";
 
 /*
  * resolve_active_hook_libs
@@ -425,6 +416,9 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         // Check for wrong context allocations in known global contexts and new contexts created under global parents, 
         // which are common patterns of wrong context usage that can lead to memory leaks across queries.
         check_wrong_context_alloc(before_snapshot, after);
+
+        /* Check for DSM segments attached but not yet detached by this backend */
+        dsm_tracker_check_leaks();
 
         // Clean up snapshots and diffs to avoid memory leaks in the extension itself
         free_context_tree(before_snapshot);

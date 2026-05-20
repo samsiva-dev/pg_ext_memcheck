@@ -6,7 +6,7 @@ description: The built-in stress scenario catalog for pg_ext_memcheck.
 import { Aside } from '@astrojs/starlight/components';
 
 <Aside type="note" title="Availability">
-  `growth_benchmark` and `tx_abort_loop` are available now. All other scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2 and are not yet implemented.
+  `growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are available now. All other scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for a future phase and are not yet implemented.
 </Aside>
 
 Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`. Refer to the [API documentation](/api/#ext_memcheckrun_scenario) for usage details.
@@ -73,15 +73,23 @@ SELECT ext_memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', i
 
 ---
 
-## shmem_sentinel_probe *(Phase 2)*
+## shmem_sentinel_probe
 
-Runs the target function and then checks all sentinel regions around tracked `ShmemAlloc()` allocations. Can be combined with `concurrent_backends` for maximum coverage.
+Plants `0xDE` sentinel bytes just past the declared boundary of each registered shared memory segment, runs the workload, then verifies all sentinels are intact. A corrupted sentinel means the extension under test wrote past its declared shmem boundary.
 
 ```sql
-SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', target => 'my_ext.fn');
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
+
+-- Inspect any overrun violations
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
+
+-- Reset registry between test runs
+SELECT ext_memcheck.clear_shmem_registry();
 ```
 
-**What it catches:** Shared memory boundary overruns; off-by-one writes into guard regions.
+**How it works:** `shmem_probe.c` allocates a `ProbeRegistry` in shared memory. The scenario calls `probe_register()` for the `ViolationLog` and `DsmTrackerState` segments — both of which were reserved with an extra byte in `_PG_init`. After the workload loop, `probe_check_all()` reads each sentinel byte. Any value other than `0xDE` logs a `shmem_overrun` ERROR violation.
+
+**What it catches:** Off-by-one writes past a segment's declared boundary; memset or memcpy calls whose length is computed incorrectly.
 
 ---
 

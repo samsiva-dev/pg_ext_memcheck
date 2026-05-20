@@ -73,5 +73,35 @@ CREATE VIEW ext_memcheck.scenarios AS
 SELECT * FROM (
     VALUES
     ('growth_benchmark', 'Measures context size growth over N invocations'),
-    ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup')
+    ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup'),
+    ('shmem_sentinel_probe', 'Plants sentinel bytes around shmem allocations and verifies integrity after workload')
 ) AS scenarios(name, description);
+
+
+-- DSM tracking view
+CREATE OR REPLACE FUNCTION ext_memcheck.dsm_tracking()
+RETURNS TABLE(
+    segid BIGINT,
+    backend_pid INTEGER,
+    attach_at TIMESTAMPTZ,
+    size_bytes BIGINT,
+    detached BOOLEAN
+) AS 'pg_ext_memcheck', 'dsm_tracker_list_segments'
+LANGUAGE C STRICT;
+
+-- 
+CREATE OR REPLACE FUNCTION ext_memcheck.track_dsm_handle(
+    handle BIGINT
+) RETURNS TEXT
+AS 'pg_ext_memcheck', 'dsm_tracker_handle'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION ext_memcheck.clear_shmem_registry()
+RETURNS void
+AS 'pg_ext_memcheck', 'shmem_probe_clear_registry'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION ext_memcheck.clear_dsm_tracking()
+RETURNS void
+AS 'pg_ext_memcheck', 'clear_dsm_tracking'
+LANGUAGE C STRICT;

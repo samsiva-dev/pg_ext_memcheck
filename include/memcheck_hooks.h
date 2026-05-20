@@ -30,4 +30,6 @@ extern PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string
 void analyze_and_log_diff(CtxDiff *diff);
 void check_wrong_context_alloc(CtxTree *before, CtxTree *after);
 
+extern char active_hook_libs[128];
+
 #endif /* MEMCHECK_HOOKS_H */

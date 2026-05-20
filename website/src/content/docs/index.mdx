@@ -56,10 +56,10 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
   <Card title="✅ Wrong-context allocations" icon="error">
     Flags `palloc()` calls that land in long-lived contexts like `TopMemoryContext` or `CacheMemoryContext` when they should be query-local.
   </Card>
-  <Card title="⬜ Shmem overruns" icon="information">
+  <Card title="✅ Shmem overruns" icon="information">
     Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
   </Card>
-  <Card title="⬜ DSM lifecycle" icon="document">
+  <Card title="✅ DSM lifecycle" icon="document">
     Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
   </Card>
   <Card title="⬜ Use-after-reset" icon="setting">

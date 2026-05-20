@@ -105,15 +105,11 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scenario_name` | `text` | — | Scenario name. Currently available: `growth_benchmark`, `tx_abort_loop`. See [Stress Scenarios](/scenarios/). |
+| `scenario_name` | `text` | — | Scenario name. Currently available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`. See [Stress Scenarios](/scenarios/). |
 | `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
 | `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
 
 **Returns:** `text` — confirmation message.
-
-<Aside type="note" title="Partial implementation">
-  `growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `shmem_sentinel_probe`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2. Passing an unknown scenario name raises an error.
-</Aside>
 
 ---
 
@@ -123,6 +119,64 @@ Utility function to clear all entries from the `ext_memcheck.violation_log` tabl
 ```sql
 SELECT ext_memcheck.clear_violations();
 ```
+
+---
+
+## ext_memcheck.dsm_tracking()
+
+Returns the current contents of the DSM segment tracking table — every segment that has been registered via `ext_memcheck.track_dsm_handle()` since the last `ext_memcheck.clear_dsm_tracking()` call.
+
+```sql
+SELECT * FROM ext_memcheck.dsm_tracking();
+```
+
+**Returns:** `TABLE(segid BIGINT, backend_pid INTEGER, attach_at TIMESTAMPTZ, size_bytes BIGINT, detached BOOLEAN)`
+
+| Column | Description |
+|---|---|
+| `segid` | DSM handle (OS-level segment identifier) |
+| `backend_pid` | PID of the backend that recorded the attachment |
+| `attach_at` | Timestamp when the segment was tracked |
+| `size_bytes` | Segment size in bytes |
+| `detached` | `true` if a matching detach was observed, `false` if leaked |
+
+---
+
+## ext_memcheck.track_dsm_handle()
+
+Registers a DSM handle with the DSM lifecycle tracker so that pg_ext_memcheck can detect whether it is properly detached.
+
+```sql
+SELECT ext_memcheck.track_dsm_handle(1234);
+```
+
+**Parameter:** `handle BIGINT` — the DSM handle to track.
+
+**Returns:** `text` — confirmation message.
+
+---
+
+## ext_memcheck.clear_dsm_tracking()
+
+Resets the DSM tracking table by zeroing all recorded segment entries. Call this between test runs to start with a clean slate.
+
+```sql
+SELECT ext_memcheck.clear_dsm_tracking();
+```
+
+**Returns:** `void`
+
+---
+
+## ext_memcheck.clear_shmem_registry()
+
+Resets the shmem sentinel probe registry by clearing all registered segment records. Existing sentinel bytes in shared memory are left in place; subsequent `run_scenario('shmem_sentinel_probe', ...)` calls will re-register and rewrite them.
+
+```sql
+SELECT ext_memcheck.clear_shmem_registry();
+```
+
+**Returns:** `void`
 
 ---
 
@@ -168,11 +222,11 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 
 ## Violation types reference
 
-| Type | Phase | Description |
-|---|---|---|
-| `context_leak` | 1 | A `MemoryContext` created during query execution was not freed by `ExecutorEnd`. |
-| `wrong_context` | 1 | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
-| `shmem_overrun` | 2 | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
-| `dsm_leak` | 2 | A DSM segment was attached during a test window but not detached before the window closed. |
-| `use_after_reset` | 2 | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
-| `context_bloat` | 2 | Total allocated bytes in the context tree increased monotonically across all iterations of a growth benchmark scenario. |
+| Type | Phase | Status | Description |
+|---|---|---|---|
+| `context_leak` | 1 | Available | A `MemoryContext` created during query execution was not freed by `ExecutorEnd`. |
+| `wrong_context` | 1 | Available | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
+| `shmem_overrun` | 2 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
+| `dsm_leak` | 2 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
+| `use_after_reset` | 2 | Planned | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
+| `context_bloat` | 2 | Planned | Total allocated bytes in the context tree increased monotonically across all iterations of a growth benchmark scenario. |
