@@ -63,7 +63,7 @@ cd "$ROOT_DIR"
 make all PG_CONFIG="$PG_CONFIG" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 echo "=== Installing pg_ext_memcheck to $PG_LIBDIR ==="
-make install PG_CONFIG="$PG_CONFIG"
+sudo make install PG_CONFIG="$PG_CONFIG"
 
 # ---------------------------------------------------------------------------
 # Step 2 — initdb a fresh cluster
