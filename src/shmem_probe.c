@@ -20,6 +20,7 @@
 
 #include "include/shmem_probe.h"
 #include "include/violation_log.h"
+#include "include/memcheck_hooks.h"
 
 /*
  * probe_register
@@ -153,7 +154,7 @@ probe_check_all(void)
             snprintf(detail, sizeof(detail),
                      "Sentinel byte overwritten past '%s' (declared_size=%zu)",
                      seg_name, declared_size);
-            violation_log_write("shmem_overrun", "ERROR", detail, "");
+            violation_log_write("shmem_overrun", "ERROR", detail, active_hook_libs);
         }
     }
 }

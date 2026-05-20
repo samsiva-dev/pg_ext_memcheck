@@ -49,7 +49,7 @@ static CtxTree *before_snapshot = NULL;
  * via dladdr().  Populated each time we take a before-snapshot so that every
  * violation written during that query carries attribution.
  */
-static char active_hook_libs[128] = "";
+char active_hook_libs[128] = "";
 
 /*
  * resolve_active_hook_libs

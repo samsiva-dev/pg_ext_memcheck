@@ -7,6 +7,7 @@
 // Local Includes
 #include "include/dsm_tracker.h"
 #include "include/violation_log.h"
+#include "include/memcheck_hooks.h"
 
 int dsm_tracker_tranche_id = 0; /* initialized in _PG_init via LWLockNewTrancheId() */
 
@@ -66,7 +67,7 @@ dsm_tracker_check_leaks(void)
             snprintf(detail_msg, sizeof(detail_msg),
                      "DSM segment with handle %u attached by backend PID %d at %s is still attached after query completion. Size: %zu bytes.",
                      record->handle, record->backend_pid, timestamptz_to_str(record->attached_at), record->size_bytes);
-            violation_log_write("dsm_leak", "WARNING", detail_msg, "");
+            violation_log_write("dsm_leak", "WARNING", detail_msg, active_hook_libs);
         }
     }
     LWLockRelease(&dsm_tracker_state->lock);
