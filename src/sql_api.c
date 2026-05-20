@@ -340,12 +340,55 @@ dsm_tracker_list_segments(PG_FUNCTION_ARGS)
         for (i = 0; i < dsm_tracker_state->count; i++)
         {
             DsmSegmentRecord *r = &dsm_tracker_state->segments[i];
+            bool live_detached = r->detached;
+
+            /*
+             * For segments we observed externally (via track_dsm_handle) we
+             * never hold a live attachment and cannot rely on the detach
+             * callback.  Probe the handle right now: if dsm_attach succeeds
+             * the segment still exists → still active; if it returns NULL the
+             * segment has been destroyed → treat as detached.  Immediately
+             * detach our probe attachment so we leave no resource open.
+             */
+            if (!r->detached)
+            {
+                dsm_segment *probe = NULL;
+                bool attach_failed = false;
+
+                /*
+                 * dsm_attach can ereport(WARNING) and return NULL, or in some
+                 * cases throw a recoverable error, when the segment no longer
+                 * exists.  Catch any such error so a destroyed-but-untracked
+                 * segment doesn't abort the whole query.
+                 */
+                PG_TRY();
+                {
+                    probe = dsm_attach(r->handle);
+                }
+                PG_CATCH();
+                {
+                    FlushErrorState();
+                    attach_failed = true;
+                }
+                PG_END_TRY();
+
+                if (probe == NULL || attach_failed)
+                {
+                    live_detached = true;
+                    /* Persist so future calls skip the probe */
+                    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
+                    r->detached = true;
+                    LWLockRelease(&dsm_tracker_state->lock);
+                }
+                else
+                    dsm_detach(probe);
+            }
 
             values[0] = Int64GetDatum((int64) r->handle);
             values[1] = Int32GetDatum(r->backend_pid);
             values[2] = TimestampTzGetDatum(r->attached_at);
             values[3] = Int64GetDatum((int64) r->size_bytes);
-            values[4] = BoolGetDatum(r->detached);
+            values[4] = BoolGetDatum(live_detached);
 
             tuplestore_putvalues(tupstore, tupdesc, values, nulls);
         }
@@ -375,7 +418,15 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
     }
 
     Size seg_size = dsm_segment_map_length(seg);
-    dsm_tracker_record_attach(seg, seg_size);
+
+    /*
+     * Record the handle as observed (not-detached) WITHOUT registering an
+     * on_dsm_detach callback.  We detach our own reference right away so
+     * PostgreSQL does not emit "resource was not closed".  The record stays
+     * detached=false until the user calls clear_dsm_tracking() or end().
+     */
+    dsm_tracker_record_handle_observe(handle, seg_size);
+    dsm_detach(seg);
 
     elog(INFO, "Attached to DSM segment with handle %u, size %zu bytes", handle, seg_size);
 

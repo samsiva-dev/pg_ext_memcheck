@@ -26,6 +26,7 @@ typedef struct DsmTrackerState {
 extern DsmTrackerState *dsm_tracker_state;
 extern int dsm_tracker_tranche_id;
 extern void dsm_tracker_record_attach(dsm_segment *seg, Size size_bytes);
+extern void dsm_tracker_record_handle_observe(dsm_handle handle, Size size_bytes);
 extern void dsm_tracker_check_leaks(void);   /* called from memcheck_end */
 extern Datum dsm_tracker_list_segments(PG_FUNCTION_ARGS);
 

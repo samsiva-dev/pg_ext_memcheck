@@ -54,7 +54,7 @@ probe_register(const char *seg_name, Size declared_size)
      * ShmemInitStruct with found=true just returns the existing pointer; it
      * does not re-allocate.  We need the segment to already exist.
      */
-    base_ptr = ShmemInitStruct(seg_name, declared_size, &found);
+    base_ptr = ShmemInitStruct(seg_name, declared_size + 1, &found);
     if (!found)
     {
         elog(WARNING,
@@ -106,7 +106,7 @@ probe_check(const char *seg_name)
     if (!found_record)
         return false;
 
-    base_ptr = ShmemInitStruct(seg_name, declared_size, &shmem_found);
+    base_ptr = ShmemInitStruct(seg_name, declared_size + 1, &shmem_found);
     if (!shmem_found)
         return false;
 

@@ -113,6 +113,9 @@ SELECT ext_memcheck.track_dsm_handle(1234);
 -- Inspect currently tracked segments
 SELECT * FROM ext_memcheck.dsm_tracking();
 
+-- Run your test workload here, then check for leaks
+SELECT * from ext_memcheck.end() WHERE check_type = 'dsm_leak'; 
+
 -- Clear the tracking table between runs
 SELECT ext_memcheck.clear_dsm_tracking();
 ```

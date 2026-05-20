@@ -56,7 +56,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 ## Your first check
 
-Test a simple function from any extension you are developing:
+Test a simple function or query from/on any extension you are developing:
 
 ```sql
 -- Start a check window in executor mode
@@ -105,7 +105,7 @@ SELECT ext_memcheck.flush_violations();
 ```
 
 <Aside type="note" title="Available scenarios">
-  `growth_benchmark` and `tx_abort_loop` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are planned for Phase 2. See the [Stress Scenarios](/scenarios/) page for details.
+  `growth_benchmark`, `tx_abort_loop` and `shmem_sentinel_probe` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are planned for Phase 2. See the [Stress Scenarios](/scenarios/) page for details.
 </Aside>
 
 ## GUC parameters

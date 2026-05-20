@@ -94,5 +94,5 @@ LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION ext_memcheck.clear_dsm_tracking()
 RETURNS void
-AS 'pg_ext_memcheck', 'dsm_tracker_clear'
+AS 'pg_ext_memcheck', 'clear_dsm_tracking'
 LANGUAGE C STRICT;

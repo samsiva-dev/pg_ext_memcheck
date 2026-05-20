@@ -13,6 +13,7 @@
 #include "optimizer/planner.h"
 #include "executor/executor.h"
 #include "utils/elog.h"
+#include "miscadmin.h"
 #include "storage/ipc.h"
 #include "storage/shmem.h"
 
@@ -33,7 +34,9 @@ PG_MODULE_MAGIC;
 // (Add any necessary hooks here, e.g., ExecutorStart_hook, ExecutorEnd_hook, etc.)
 static emit_log_hook_type prev_emit_log_hook = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
 
+static void memcheck_shmem_request(void); // Forward declaration of shared memory request hook
 static void memcheck_shmem_startup(void); // Forward declaration of shared memory startup hook
 
 // Hook installation and uninstallation functions
@@ -70,16 +73,6 @@ _PG_init(void)
     install_executor_hooks();
     install_planner_hook();
 
-    RequestAddinShmemSpace(sizeof(ViolationLog) + 1);
-    RequestAddinShmemSpace(sizeof(DsmTrackerState) + 1);
-    RequestAddinShmemSpace(sizeof(ProbeRegistry));
-
-    dsm_tracker_tranche_id = LWLockNewTrancheId();
-    LWLockRegisterTranche(dsm_tracker_tranche_id, "pg_ext_memcheck_dsm_tracker");
-
-    shmem_probe_tranche_id = LWLockNewTrancheId();
-    LWLockRegisterTranche(shmem_probe_tranche_id, "pg_ext_memcheck_shmem_probe");
-
     /* Register backend-exit callback to catch leaks even without an explicit end() */
     on_proc_exit(memcheck_proc_exit_dsm_check, (Datum) 0);
 }
@@ -109,6 +102,9 @@ install_hooks(void)
     prev_emit_log_hook = emit_log_hook;
     emit_log_hook = NULL;            // TODO: Set when defined
 
+    prev_shmem_request_hook = shmem_request_hook;
+    shmem_request_hook = memcheck_shmem_request;
+
     prev_shmem_startup_hook = shmem_startup_hook;
     shmem_startup_hook = memcheck_shmem_startup;
 }
@@ -122,13 +118,41 @@ uninstall_hooks(void)
 {
     // Restore previous hooks
     emit_log_hook = prev_emit_log_hook;
+    shmem_request_hook = prev_shmem_request_hook;
     shmem_startup_hook = prev_shmem_startup_hook;
+}
+
+static void
+memcheck_shmem_request(void)
+{
+    if (prev_shmem_request_hook)
+        prev_shmem_request_hook();
+
+    RequestAddinShmemSpace(sizeof(ViolationLog) + 1);
+    RequestAddinShmemSpace(sizeof(DsmTrackerState) + 1);
+    RequestAddinShmemSpace(sizeof(ProbeRegistry));
 }
 
 static void memcheck_shmem_startup(void)
 {
     // Allocate shared memory for the violation log
     bool found;
+
+    /*
+     * Tranche IDs must be allocated here (not in _PG_init) because
+     * LWLockNewTrancheId() accesses a shared-memory counter that does
+     * not exist until after CreateSharedMemoryAndSemaphores() runs.
+     */
+    if (dsm_tracker_tranche_id == 0)
+    {
+        dsm_tracker_tranche_id = LWLockNewTrancheId();
+        LWLockRegisterTranche(dsm_tracker_tranche_id, "pg_ext_memcheck_dsm_tracker");
+    }
+    if (shmem_probe_tranche_id == 0)
+    {
+        shmem_probe_tranche_id = LWLockNewTrancheId();
+        LWLockRegisterTranche(shmem_probe_tranche_id, "pg_ext_memcheck_shmem_probe");
+    }
     violation_log = (ViolationLog *) ShmemInitStruct("pg_ext_memcheck ViolationLog",
                                                       sizeof(ViolationLog) + 1,
                                                       &found);
