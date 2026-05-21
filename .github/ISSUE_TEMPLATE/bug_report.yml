@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill this out as completely as possible.
+
+  - type: input
+    id: pg-version
+    attributes:
+      label: PostgreSQL version
+      placeholder: "e.g. 16.2"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. Ubuntu 22.04, macOS 14"
+    validations:
+      required: true
+
+  - type: input
+    id: ext-version
+    attributes:
+      label: pg_ext_memcheck version or commit
+      placeholder: "e.g. v0.2.0 or abc1234"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. CREATE EXTENSION pg_ext_memcheck;
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste any error messages, logs, or GDB output here
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — Valgrind output, custom GUCs, shared_preload_libraries config
+    validations:
+      required: false

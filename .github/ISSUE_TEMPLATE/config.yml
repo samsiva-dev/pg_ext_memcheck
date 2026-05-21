@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: PostgreSQL core bugs
+    url: https://www.postgresql.org/support/submitbug/
+    about: For bugs in PostgreSQL itself, not this extension
