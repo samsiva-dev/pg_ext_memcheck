@@ -1,3 +1,13 @@
+/*-------------------------------------------------------------------------
+ * pg_ext_memcheck
+ *
+ * Copyright (c) 2026, Samba Siva Reddy
+ *
+ * This software is released under the MIT License.
+ * See LICENSE for details.
+ *-------------------------------------------------------------------------
+*/
+
 /*
     Implementation of SQL API functions for pg_ext_memcheck extension.
     This file contains the implementation of the SQL-callable functions for the pg_ext_memcheck extension.

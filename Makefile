@@ -1,6 +1,6 @@
 # Makefile for pg_ext_memcheck extension
 EXTENSION = pg_ext_memcheck
-DATA = sql/pg_ext_memcheck--0.0.1.sql
+DATA = sql/pg_ext_memcheck--0.1.0.sql
 
 # Source files for the extension
 OBJS = src/pg_ext_memcheck.o \

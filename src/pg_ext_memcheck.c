@@ -1,3 +1,13 @@
+/*-------------------------------------------------------------------------
+ * pg_ext_memcheck
+ *
+ * Copyright (c) 2026, Samba Siva Reddy
+ *
+ * This software is released under the MIT License.
+ * See LICENSE for details.
+ *-------------------------------------------------------------------------
+*/
+
 /*
     pg_ext_memcheck is a PostgreSQL extension that monitors memory usage during query execution
     and detects potential memory leaks or anomalies. It uses hooks into the executor to take
