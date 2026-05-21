@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+    open-pull-requests-limit: 5
+
+  # Website (Vercel docs site)
+  - package-ecosystem: "npm"
+    directory: "/website"          # ← points to where package.json lives
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    labels:
+      - "dependencies"
+      - "website"
+    commit-message:
+      prefix: "chore(website)"
+    open-pull-requests-limit: 5
+    ignore:
+      # Ignore major version bumps — those often need manual migration
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
