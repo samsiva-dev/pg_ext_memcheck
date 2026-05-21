@@ -29,6 +29,7 @@
 // GUC variable definitions
 MemCheckMode memcheck_mode      = MEMCHECK_ALL;
 int          memcheck_min_leak_bytes = 8192; /* 8 KiB default */
+int          memcheck_bloat_min_bytes = 8192; /* 8 KiB default */
 
 static const struct config_enum_entry memcheck_mode_options[] = {
     {"all",      MEMCHECK_ALL,      false},
@@ -61,6 +62,19 @@ DefineCustomGUCs(void)
                             "Contexts growing by less than this value are silently skipped. Default is 8192 (8 KiB).",
                             &memcheck_min_leak_bytes,
                             8192,       /* default: 8 KiB */
+                            0,          /* min */
+                            INT_MAX,    /* max */
+                            PGC_USERSET,
+                            GUC_UNIT_BYTE,
+                            NULL, NULL, NULL);
+    
+    // Minimum allocation growth (in bytes) required to log a context bloat warning.
+    // Contexts that grow by less than this amount are silently ignored.
+    DefineCustomIntVariable("pg_ext_memcheck.bloat_min_bytes",
+                            "Minimum cumulative growth in bytes to report a context as bloating.",
+                            "A context whose used memory grows monotonically by less than this value across growth_benchmark checkpoints is not reported. Default is 8192 (8 KiB).",
+                            &memcheck_bloat_min_bytes,
+                            8192,      /* default: 8 KiB */
                             0,          /* min */
                             INT_MAX,    /* max */
                             PGC_USERSET,

@@ -25,6 +25,7 @@ extern void DefineCustomGUCs(void);
 // external GUC variables
 // integer GUCs
 extern int memcheck_min_leak_bytes; // minimum growth (bytes) to log as INFO
+extern int memcheck_bloat_min_bytes; // minimum growth (bytes) to log as WARNING
 
 // GUC variable for memory checking mode
 extern MemCheckMode memcheck_mode; 

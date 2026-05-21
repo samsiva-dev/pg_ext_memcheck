@@ -6,7 +6,7 @@ description: The built-in stress scenario catalog for pg_ext_memcheck.
 import { Aside } from '@astrojs/starlight/components';
 
 <Aside type="note" title="Availability">
-  `growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are available now. All other scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for a future phase and are not yet implemented.
+  `growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are Phase 1 scenarios available now. `wrong_context_probe` is a Phase 2 scenario that is now implemented and available. The remaining Phase 2 scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are not yet implemented.
 </Aside>
 
 Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`. Refer to the [API documentation](/api/#ext_memcheckrun_scenario) for usage details.
@@ -15,14 +15,47 @@ Stress scenarios are parameterized test programs that subject an extension funct
 
 ## growth_benchmark
 
-Invokes the target SQL a configurable number of times and measures the change in total bytes allocated across the `MemoryContext` tree. A monotonically increasing delta flags a slow cumulative leak.
+Invokes the target SQL a configurable number of iterations and tracks the per-`MemoryContext` used bytes at **log-spaced checkpoints** (iteration 1, 10, 100, …, up to a maximum of 8 checkpoints). Contexts that grow monotonically across at least two checkpoints and exceed `pg_ext_memcheck.bloat_min_bytes` (default 16 KiB) are reported as `ctx_bloat` violations.
 
 ```sql
 SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT 1');
 ```
-**How it works:** Before the first invocation, `context_walker.c` takes a snapshot of the `MemoryContext` tree, recording the total allocated bytes for each context. Runs for 1000 iterations (based on the `iterations` parameter). After the last invocation, it takes another snapshot and compares the two.
 
-**What it catches:** Slow cumulative leaks that would be invisible in a single-call test; monotonic context bloat.
+**How it works:**
+
+1. A private `AllocSet` context (`pg_ext_memcheck bench`) is created to own the bookkeeping data — this context is excluded from analysis.
+2. Checkpoint iteration numbers are computed as `1, 10, 100, …` (powers of 10, capped at `iterations`). Up to 8 checkpoints are used.
+3. After each checkpoint iteration, `context_walker` snapshots the full `MemoryContext` tree and records used bytes (allocated − freed) for every context, identified by *(name, depth, parent hash)*.
+4. Contexts that appear mid-run are back-filled with `0`; contexts that disappear are carried forward at their last observed value.
+5. After all iterations complete, each tracked context is analyzed:
+   - Must have grown from first to last checkpoint.
+   - Must show monotonic (non-decreasing) growth.
+   - Must have increased at 2+ checkpoints (single-shot spikes are ignored).
+   - Total growth must be ≥ `bloat_min_bytes`.
+6. Growth shape is classified as **superlinear** when the per-iteration rate in the last checkpoint interval exceeds 1.5× the rate in the first interval; otherwise **linear**.
+7. Violations are written to the ring buffer as `ctx_bloat`. The generic before/after diff is **skipped** for this scenario to avoid double-reporting the same growth as `context_leak`.
+
+**Severity:**
+
+| Level | Base condition | Escalation |
+|---|---|---|
+| `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear growth |
+| `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear growth |
+| `INFO` | Total growth ≥ `bloat_min_bytes` | — |
+
+**What it catches:** Slow cumulative leaks that are invisible in single-call tests; monotonic context bloat; accelerating (superlinear) allocation patterns that will exhaust memory under sustained load.
+
+**Tuning:**
+
+```sql
+-- Raise sensitivity: report any context that grew by at least 4 KiB
+SET pg_ext_memcheck.bloat_min_bytes = 4096;
+
+-- Run 1000 iterations; checkpoints will be at 1, 10, 100, 1000
+SELECT ext_memcheck.run_scenario('growth_benchmark', 1000, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'ctx_bloat';
+```
 
 ---
 
@@ -107,14 +140,23 @@ SELECT ext_memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', i
 
 ## wrong_context_probe *(Phase 2)*
 
-Instruments `palloc()` calls during target invocation and checks that no allocation lands in `TopMemoryContext`, `CacheMemoryContext`, or any user-specified forbidden context.
+Runs the target workload SQL a configurable number of times, then diffs the `MemoryContext` tree before and after to detect allocations that landed in long-lived global contexts (`TopMemoryContext`, `CacheMemoryContext`). Unlike the generic executor-hook path, this scenario **skips the `context_leak` diff** entirely — it runs only `check_wrong_context_alloc`, so results are focused exclusively on wrong-context violations without noise from ordinary leak detection.
 
 ```sql
-SELECT ext_memcheck.run_scenario(
-    'wrong_context_probe',
-    target => 'my_ext.fn',
-    args   => ARRAY['{"pg_ext_memcheck.watch_contexts": "MyLongLivedCtx"}']
-);
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 50, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'wrong_ctx_alloc';
 ```
 
-**What it catches:** Accidental long-lived allocations from query-handler code.
+**How it works:**
+
+1. Before the first iteration, `context_walker` snapshots the full `MemoryContext` tree.
+2. The workload SQL is executed `iterations` times via SPI.
+3. After the last iteration, a second snapshot is taken and `check_wrong_context_alloc` is called with the before/after pair.
+4. `check_wrong_context_alloc` runs two passes:
+   - **Growth pass** — any named global context (`TopMemoryContext`, `CacheMemoryContext`) whose `totalAllocated` increased since the pre-run snapshot emits a `wrong_ctx_alloc` WARNING with the byte delta.
+   - **New-child pass** — any context that appeared in the post-run snapshot but not the pre-run snapshot and whose parent is a known global emits a `wrong_ctx_alloc` WARNING identifying the newly created child.
+
+**What it catches:** Extension functions that allocate in long-lived contexts (`TopMemoryContext`, `CacheMemoryContext`) instead of query-local contexts — a common source of per-backend memory growth that accumulates silently across sessions.
+
+**When to use over the default executor hook:** The executor hook also calls `check_wrong_context_alloc`, but it does so alongside context-leak detection and only for queries passing through the hook. Use `wrong_context_probe` when you want a clean, isolated signal across N controlled repetitions without unrelated leak noise.

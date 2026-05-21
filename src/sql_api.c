@@ -43,10 +43,174 @@
 #include "include/dsm_tracker.h"
 #include "include/shmem_probe.h"
 
+#define MAX_CHECKPOINTS 8 
+
+typedef struct BloatSeries {
+    char  name[NAMEDATALEN];
+    int   depth;
+    Oid   parentHash;        
+    Size  used[MAX_CHECKPOINTS];    /* allocated-free at each checkpoint */
+    int   n;                        /* checkpoints recorded */
+} BloatSeries;
+
+
 // Static function declarations
 static void run_growth_benchmark(int iterations, const char *workload);
 static void run_tx_abort_loop(int iterations, const char *workload);
 static void run_shmem_sentinel_probe(int iterations, const char *workload);
+static void run_wrong_context_probe(int iterations, const char *workload);
+static Size ctx_used_bytes(const CtxSnapshot *s);
+static int build_checkpoints(int iterations, int *ckpts);
+static void record_checkpoint(BloatSeries **series, int *count, int *cap,
+                int ckpt_idx, MemoryContext bench_ctx);
+static void analyze_bloat(BloatSeries *series, int count, const int *ckpts);
+
+/* Helper function to calculate used bytes from a context snapshot. */
+static Size
+ctx_used_bytes(const CtxSnapshot *s)
+{
+    return (s->totalAllocated >= s->totalFree)
+           ? s->totalAllocated - s->totalFree : 0;
+}
+
+/* Log-spaced checkpoints (1,10,100,...) capped at iterations, plus iterations itself. */
+static int
+build_checkpoints(int iterations, int *ckpts)
+{
+    int  n = 0;
+    long p = 1;
+
+    while (p <= iterations && n < MAX_CHECKPOINTS - 1) {
+        ckpts[n++] = (int) p;
+        p *= 10;
+    }
+    if (n == 0 || ckpts[n - 1] != iterations) {
+        if (n < MAX_CHECKPOINTS) 
+            ckpts[n++] = iterations;
+        else                     
+            ckpts[n - 1] = iterations;
+    }
+    return n;
+}
+
+/*
+    * Record a checkpoint of context usage for all contexts in the tree rooted at bench_ctx.
+    * This function updates the provided series array with the used bytes for each context at this checkpoint.
+    * It also carries forward contexts that disappeared since the last checkpoint, keeping lengths aligned.
+*/
+static void
+record_checkpoint(BloatSeries **series, int *count, int *cap,
+                  int ckpt_idx, MemoryContext bench_ctx)
+{
+    MemoryContext old = MemoryContextSwitchTo(bench_ctx);
+    CtxTree *tree     = snapshot_context_tree(TopMemoryContext);
+    int      base     = *count;
+    bool    *matched  = (bool *) palloc0(sizeof(bool) * (base > 0 ? base : 1));
+    int      i, j;
+
+    for (i = 0; i < tree->count; i++) {
+        CtxSnapshot *e = &tree->entries[i];
+        Size used;
+        int  found = -1;
+
+        if (strcmp(e->name, "pg_ext_memcheck bench") == 0)
+            continue;                       /* exclude our own bookkeeping ctx */
+
+        used = ctx_used_bytes(e);
+
+        for (j = 0; j < base; j++) {
+            BloatSeries *s = &(*series)[j];
+            if (!matched[j] && s->depth == e->depth &&
+                s->parentHash == e->parentHash &&
+                strcmp(s->name, e->name) == 0) { found = j; break; }
+        }
+
+        if (found >= 0) {
+            BloatSeries *s = &(*series)[found];
+            matched[found] = true;
+            s->used[s->n++] = used;
+        } else {
+            BloatSeries *s;
+            if (*count >= *cap) {
+                *cap = (*cap == 0) ? 64 : *cap * 2;
+                *series = (BloatSeries *) repalloc(*series, sizeof(BloatSeries) * (*cap));
+            }
+            s = &(*series)[(*count)++];
+            snprintf(s->name, NAMEDATALEN, "%s", e->name);
+            s->depth = e->depth; s->parentHash = e->parentHash; s->n = 0;
+            while (s->n < ckpt_idx) s->used[s->n++] = 0;   /* back-fill late arrivals */
+            s->used[s->n++] = used;
+        }
+    }
+
+    /* carry-forward series that vanished this checkpoint, keeping lengths aligned */
+    for (j = 0; j < base; j++) {
+        BloatSeries *s = &(*series)[j];
+        if (!matched[j] && s->n <= ckpt_idx) {
+            Size carry = (s->n > 0) ? s->used[s->n - 1] : 0;
+            while (s->n <= ckpt_idx) s->used[s->n++] = carry;
+        }
+    }
+
+    pfree(matched);
+    free_context_tree(tree);            /* never persist a CtxTree across checkpoints */
+    MemoryContextSwitchTo(old);
+}
+
+/*
+    Analyze the recorded bloat series and log any contexts that show steady growth patterns indicative of bloat.
+    This function applies heuristics to determine if a context is bloating and logs violations accordingly.
+*/
+static void
+analyze_bloat(BloatSeries *series, int count, const int *ckpts)
+{
+    int i, k;
+
+    for (i = 0; i < count; i++) {
+        BloatSeries *s = &series[i];
+        Size first, last, total_growth;
+        bool monotonic = true;
+        int  grew = 0;
+        double early_rate, late_rate;
+        const char *shape, *severity;
+        char detail[256];
+
+        if (s->n < 2) continue;
+        first = s->used[0];
+        last  = s->used[s->n - 1];
+        if (last <= first) continue;
+        total_growth = last - first;
+        if (total_growth < (Size) memcheck_bloat_min_bytes) continue;
+
+        for (k = 1; k < s->n; k++) {
+            if (s->used[k] < s->used[k - 1]) { monotonic = false; break; }
+            if (s->used[k] > s->used[k - 1]) grew++;
+        }
+        if (!monotonic || grew < 2) continue;   /* one-shot / noisy, not steady bloat */
+
+        early_rate = (double)(s->used[1] - s->used[0]) / (double)(ckpts[1] - ckpts[0]);
+        late_rate  = (double)(s->used[s->n - 1] - s->used[s->n - 2]) /
+                     (double)(ckpts[s->n - 1] - ckpts[s->n - 2]);
+        shape = (late_rate > 1.5 * early_rate) ? "superlinear" : "linear";
+
+        if      (total_growth > (Size)(1 * 1024 * 1024)) severity = "ERROR";
+        else if (total_growth > (Size)(64 * 1024))       severity = "WARNING";
+        else                                             severity = "INFO";
+
+        if (strcmp(shape, "superlinear") == 0) {        /* bump one rung */
+            if      (strcmp(severity, "INFO") == 0)    severity = "WARNING";
+            else if (strcmp(severity, "WARNING") == 0) severity = "ERROR";
+        }
+
+        snprintf(detail, sizeof(detail),
+                 "context '%s' (depth %d): %s bloat over %d iters, "
+                 "used %zu->%zu bytes (+%zu); rate early=%.1f late=%.1f B/iter",
+                 s->name, s->depth, shape, ckpts[s->n - 1],
+                 first, last, total_growth, early_rate, late_rate);
+
+        violation_log_write("ctx_bloat", severity, detail, active_hook_libs);
+    }
+}
 
 /*
  * memcheck_begin -- SQL-callable function to start a memory check session.
@@ -170,17 +334,40 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     int      iterations    = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100;
     text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
     char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
-    CtxTree *before_snapshot_tree;
+    CtxTree *before_snapshot_tree = NULL;
     CtxTree *after_snapshot_tree;
     CtxDiff *diffs;
     int      diff_count;
     int      i;
+    bool     run_leak_diff;   /* analyze_and_log_diff -> context_leak */
+    bool     run_wrong_ctx;   /* check_wrong_context_alloc -> wrong_ctx_alloc */
+    bool     need_snapshots;
 
     elog(INFO, "Running memory check scenario: %s", scenario_str);
     elog(INFO, "Iterations: %d", iterations);
     elog(INFO, "Workload: %s", workload_str);
 
-    before_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+    /*
+     * Each scenario selects exactly which generic checks run after the workload:
+     *   growth_benchmark    -> ctx_bloat only (owns its own checkpointed analysis)
+     *   wrong_context_probe -> wrong_ctx_alloc only
+     *   everything else     -> context_leak + wrong_ctx_alloc
+     */
+    if (strcmp(scenario_str, "growth_benchmark") == 0) {
+        run_leak_diff = false;
+        run_wrong_ctx = false;
+    } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
+        run_leak_diff = false;
+        run_wrong_ctx = true;
+    } else {
+        run_leak_diff = true;
+        run_wrong_ctx = true;
+    }
+    need_snapshots = run_leak_diff || run_wrong_ctx;
+
+    if (need_snapshots)
+        before_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+
     memcheck_in_internal_query = true;
 
     if (strcmp(scenario_str, "growth_benchmark") == 0) {
@@ -189,20 +376,29 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
         run_tx_abort_loop(iterations, workload_str);
     } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
         run_shmem_sentinel_probe(iterations, workload_str);
+    } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
+        run_wrong_context_probe(iterations, workload_str);
     } else {
+        memcheck_in_internal_query = false;
         elog(ERROR, "Unknown scenario: %s", scenario_str);
     }
 
     memcheck_in_internal_query = false;
-    after_snapshot_tree = snapshot_context_tree(TopMemoryContext);
 
-    diff_count = 0;
-    diffs = diff_context_trees(before_snapshot_tree, after_snapshot_tree, &diff_count);
-    for (i = 0; i < diff_count; i++) {
-        analyze_and_log_diff(&diffs[i]);
+    if (need_snapshots) {
+        after_snapshot_tree = snapshot_context_tree(TopMemoryContext);
+
+        if (run_leak_diff) {
+            diff_count = 0;
+            diffs = diff_context_trees(before_snapshot_tree, after_snapshot_tree, &diff_count);
+            for (i = 0; i < diff_count; i++) {
+                analyze_and_log_diff(&diffs[i]);
+            }
+        }
+
+        if (run_wrong_ctx)
+            check_wrong_context_alloc(before_snapshot_tree, after_snapshot_tree);
     }
-    // Check for wrong context allocations as well
-    check_wrong_context_alloc(before_snapshot_tree, after_snapshot_tree); 
 
     PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
 }
@@ -246,28 +442,51 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
 }
 
 static void
-run_growth_benchmark(int iterations, const char *workload) {
-    int i;
-    if (iterations <= 0) {
-        elog(ERROR, "Iterations must be a positive integer");
-        return;
+run_growth_benchmark(int iterations, const char *workload)
+{
+    int            ckpts[MAX_CHECKPOINTS];
+    int            nckpt, ckpt_idx, i;
+    MemoryContext  bench_ctx, old;
+    BloatSeries   *series = NULL;
+    int            series_count = 0, series_cap = 64;
+
+    if (iterations <= 0) { 
+        elog(ERROR, "Iterations must be a positive integer"); 
+        return; 
     }
 
+    nckpt     = build_checkpoints(iterations, ckpts);
+    bench_ctx = AllocSetContextCreate(TopMemoryContext, "pg_ext_memcheck bench",
+                                      ALLOCSET_DEFAULT_SIZES);
+
     if (SPI_connect() != SPI_OK_CONNECT) {
+        MemoryContextDelete(bench_ctx);
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
         return;
     }
 
-    for (i = 0; i < iterations; i++) {
+    old = MemoryContextSwitchTo(bench_ctx);
+    series = (BloatSeries *) palloc(sizeof(BloatSeries) * series_cap);
+    MemoryContextSwitchTo(old);
+
+    ckpt_idx = 0;
+    for (i = 1; i <= iterations; i++) {
         int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT) {
-            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
             SPI_finish();
+            MemoryContextDelete(bench_ctx);
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
             return;
+        }
+        if (ckpt_idx < nckpt && i == ckpts[ckpt_idx]) {   /* snapshot between statements */
+            record_checkpoint(&series, &series_count, &series_cap, ckpt_idx, bench_ctx);
+            ckpt_idx++;
         }
     }
 
     SPI_finish();
+    analyze_bloat(series, series_count, ckpts);
+    MemoryContextDelete(bench_ctx);
 }
 
 static void
@@ -309,6 +528,34 @@ run_tx_abort_loop(int iterations, const char *workload) {
     SPI_execute("RELEASE SAVEPOINT _memcheck_sp", false, 0); // Clean up savepoint after loop
 
     SPI_finish();
+}
+
+static void
+run_wrong_context_probe(int iterations, const char *workload)
+{
+    int i;
+
+    if (iterations <= 0) {
+        elog(ERROR, "Iterations must be a positive integer");
+        return;
+    }
+
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        return;
+    }
+
+    for (i = 0; i < iterations; i++) {
+        int ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT) {
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+            SPI_finish();
+            return;
+        }
+    }
+
+    SPI_finish();
+    /* Detection happens in memcheck_run_scenario via check_wrong_context_alloc. */
 }
 
 PG_FUNCTION_INFO_V1(dsm_tracker_list_segments);
