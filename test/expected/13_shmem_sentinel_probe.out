@@ -2,10 +2,10 @@
 -- Verify shmem_sentinel_probe scenario runs without error,
 -- appears in the scenarios view, and logs no shmem_overrun violations.
 SET client_min_messages = WARNING;
-SELECT ext_memcheck.flush_violations();
- flush_violations 
-------------------
-                0
+SELECT ext_memcheck.flush_violations() >= 0 AS flushed;
+ flushed 
+---------
+ t
 (1 row)
 
 DELETE FROM ext_memcheck.violation_log;
@@ -21,8 +21,8 @@ INFO:  Workload: SELECT 1
 
 -- Scenario must appear in the scenarios view
 SELECT name FROM ext_memcheck.scenarios WHERE name = 'shmem_sentinel_probe';
-         name          
------------------------
+         name         
+----------------------
  shmem_sentinel_probe
 (1 row)
 

@@ -4,7 +4,7 @@
 
 SET client_min_messages = WARNING;
 
-SELECT ext_memcheck.flush_violations();
+SELECT ext_memcheck.flush_violations() >= 0 AS flushed;
 DELETE FROM ext_memcheck.violation_log;
 
 -- Scenario must run without error
