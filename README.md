@@ -1,4 +1,7 @@
 # pg_ext_memcheck
+[![CI](https://github.com/samsiva-dev/pg_ext_memcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/samsiva-dev/pg_ext_memcheck/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/samsiva-dev/pg_ext_memcheck)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/samsiva-dev/pg_ext_memcheck)](0.0.1)
 
 > **Development preview — not production-safe.** APIs may change between releases.
 
