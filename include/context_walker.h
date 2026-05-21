@@ -20,8 +20,8 @@ typedef struct CtxSnapshot {
     char   name[NAMEDATALEN];
     Size   totalAllocated;
     Size   totalFree;
-    int    depth;           /* depth in tree */
-    Oid    parentHash;      /* hash of parent name+depth for diff */
+    int      depth;         /* depth in tree */
+    uint32   parentHash;    /* hash of parent name+depth for diff */
 } CtxSnapshot;
 
 // Context Tree Structure
@@ -45,6 +45,6 @@ extern CtxTree* snapshot_context_tree(MemoryContext root);
 extern CtxDiff* diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count);
 extern void free_context_tree(CtxTree *tree);
 extern void free_context_diff(CtxDiff *diff);
-extern Oid ctx_compute_hash(const char *name, int depth);
+extern uint32 ctx_compute_hash(const char *name, int depth);
 
 #endif /* CONTEXT_WALKER_H */

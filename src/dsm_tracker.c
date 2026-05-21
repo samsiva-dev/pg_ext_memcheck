@@ -69,7 +69,7 @@ dsm_tracker_check_leaks(void)
 
     // Check for any segments that are still attached and were attached by the current backend. 
     // Log a warning for each potential leak.
-    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
+    LWLockAcquire(&dsm_tracker_state->lock, LW_SHARED);
     for (i = 0; i < dsm_tracker_state->count; i++)
     {
         DsmSegmentRecord *record = &dsm_tracker_state->segments[i];

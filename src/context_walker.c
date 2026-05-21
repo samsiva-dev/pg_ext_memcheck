@@ -23,7 +23,7 @@
  * depth.  Used as parentHash so the diff can distinguish same-named contexts
  * that live at different levels of the tree.
  */
-Oid
+uint32
 ctx_compute_hash(const char *name, int depth)
 {
     uint32      h = 5381;
@@ -32,7 +32,7 @@ ctx_compute_hash(const char *name, int depth)
     for (p = name; *p; p++)
         h = ((h << 5) + h) ^ (unsigned char) *p;
     h = h * 31 ^ (uint32) depth;
-    return (Oid) h;
+    return h;
 }
 
 /* Grow tree->entries by doubling, handling the initial NULL case. */
@@ -60,7 +60,7 @@ tree_ensure_capacity(CtxTree *tree)
  * freespace for the whole context.  
  */
 static CtxSnapshot
-get_context_snapshot(MemoryContext context, int depth, Oid parentHash)
+get_context_snapshot(MemoryContext context, int depth, uint32 parentHash)
 {
     CtxSnapshot             snapshot;
     MemoryContextCounters   counters;
@@ -84,10 +84,10 @@ get_context_snapshot(MemoryContext context, int depth, Oid parentHash)
  * every level of the tree.
  */
 static void
-walk_context_tree(MemoryContext ctx, int depth, Oid parentHash, CtxTree *tree)
+walk_context_tree(MemoryContext ctx, int depth, uint32 parentHash, CtxTree *tree)
 {
     CtxSnapshot  snapshot = get_context_snapshot(ctx, depth, parentHash);
-    Oid          myHash   = ctx_compute_hash(snapshot.name, depth);
+    uint32       myHash   = ctx_compute_hash(snapshot.name, depth);
     MemoryContext child;
 
     tree_ensure_capacity(tree);

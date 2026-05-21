@@ -46,10 +46,10 @@
 #define MAX_CHECKPOINTS 8 
 
 typedef struct BloatSeries {
-    char  name[NAMEDATALEN];
-    int   depth;
-    Oid   parentHash;        
-    Size  used[MAX_CHECKPOINTS];    /* allocated-free at each checkpoint */
+    char    name[NAMEDATALEN];
+    int     depth;
+    uint32  parentHash;
+    Size    used[MAX_CHECKPOINTS];  /* allocated-free at each checkpoint */
     int   n;                        /* checkpoints recorded */
 } BloatSeries;
 
@@ -128,7 +128,8 @@ record_checkpoint(BloatSeries **series, int *count, int *cap,
         if (found >= 0) {
             BloatSeries *s = &(*series)[found];
             matched[found] = true;
-            s->used[s->n++] = used;
+            if (s->n < MAX_CHECKPOINTS)
+                s->used[s->n++] = used;
         } else {
             BloatSeries *s;
             if (*count >= *cap) {
@@ -138,8 +139,9 @@ record_checkpoint(BloatSeries **series, int *count, int *cap,
             s = &(*series)[(*count)++];
             snprintf(s->name, NAMEDATALEN, "%s", e->name);
             s->depth = e->depth; s->parentHash = e->parentHash; s->n = 0;
-            while (s->n < ckpt_idx) s->used[s->n++] = 0;   /* back-fill late arrivals */
-            s->used[s->n++] = used;
+            while (s->n < ckpt_idx && s->n < MAX_CHECKPOINTS) s->used[s->n++] = 0;   /* back-fill late arrivals */
+            if (s->n < MAX_CHECKPOINTS)
+                s->used[s->n++] = used;
         }
     }
 
@@ -148,7 +150,7 @@ record_checkpoint(BloatSeries **series, int *count, int *cap,
         BloatSeries *s = &(*series)[j];
         if (!matched[j] && s->n <= ckpt_idx) {
             Size carry = (s->n > 0) ? s->used[s->n - 1] : 0;
-            while (s->n <= ckpt_idx) s->used[s->n++] = carry;
+            while (s->n <= ckpt_idx && s->n < MAX_CHECKPOINTS) s->used[s->n++] = carry;
         }
     }
 
