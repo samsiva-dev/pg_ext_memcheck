@@ -49,6 +49,12 @@ cleanup() {
     local exit_code=$?
     echo ""
     echo "--- Stopping temporary cluster ---"
+    # Print the server log before deleting PGDATA so failures are visible in CI
+    if [ -f "$PGLOG" ]; then
+        echo "=== PostgreSQL server log ($PGLOG) ==="
+        cat "$PGLOG"
+        echo "=== End of server log ==="
+    fi
     "$PG_BIN/pg_ctl" -D "$PGDATA" stop -m fast -w 2>/dev/null || true
     rm -rf "$PGDATA"
     echo "--- Cluster removed ---"
@@ -101,12 +107,16 @@ EOF
 # Step 4 — Start the server and wait for it to be ready
 # ---------------------------------------------------------------------------
 echo "=== Starting temporary server on port $PGPORT ==="
-"$PG_BIN/pg_ctl" \
+if ! "$PG_BIN/pg_ctl" \
     -D "$PGDATA" \
     -l "$PGLOG" \
     start \
     -w \
-    -o "-p $PGPORT"
+    -o "-p $PGPORT"; then
+    echo "ERROR: pg_ctl could not start the server. Dumping log:" >&2
+    cat "$PGLOG" >&2
+    exit 1
+fi
 
 # Verify the server is reachable (suppress pager)
 PAGER=cat "$PG_BIN/psql" -h 127.0.0.1 -p "$PGPORT" -U postgres -d postgres \
