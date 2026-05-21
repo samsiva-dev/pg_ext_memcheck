@@ -20,31 +20,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install PostgreSQL ${{ matrix.pg }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl ca-certificates
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            > /etc/apt/sources.list.d/pgdg.list'
-          sudo apt-get update
-          sudo apt-get install -y \
-            postgresql-${{ matrix.pg }} \
-            postgresql-server-dev-${{ matrix.pg }}
+        uses: pgxn/setup-postgres@v2
+        with:
+          version: ${{ matrix.pg }}
 
       - name: Build extension
-        run: |
-          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
-          make PG_CONFIG=$PG_CONFIG
+        run: make
 
       - name: Install extension
-        run: |
-          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
-          sudo make PG_CONFIG=$PG_CONFIG install
+        run: sudo make install
 
       - name: Run regression tests
-        run: |
-          export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
-          bash test/run_tests.sh
+        run: bash test/run_tests.sh
