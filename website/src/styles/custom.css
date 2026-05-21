@@ -1,30 +1,326 @@
+/* ==========================================================================
+   pg_ext_memcheck — premium documentation theme
+   Built on Astro Starlight. PostgreSQL "elephant blue" palette, refined with
+   gradients, soft depth, and motion. Dark theme is the default.
+   ========================================================================== */
+
+/* ----- Design tokens -------------------------------------------------------
+   Palette is anchored on PostgreSQL blue (#336791) and extended into a richer
+   set of accents and surface tints used across components below. */
 :root {
-  --sl-color-accent-low: #1a3a5c;
-  --sl-color-accent: #336791;
-  --sl-color-accent-high: #5b9bd5;
+  /* Brand accents (consumed by Starlight) */
+  --sl-color-accent-low: #102a43;
+  --sl-color-accent: #3b82b8;
+  --sl-color-accent-high: #9ecbed;
+
+  /* Local premium palette */
+  --pm-brand: #336791;
+  --pm-brand-bright: #5b9bd5;
+  --pm-brand-soft: #9ecbed;
+  --pm-cyan: #38bdf8;
+  --pm-violet: #8b7cf6;
+  --pm-success: #4ade80;
+  --pm-warning: #fbbf24;
+  --pm-danger: #f87171;
+
+  /* Signature gradient reused across hero, headings, accents */
+  --pm-gradient: linear-gradient(135deg, #5b9bd5 0%, #38bdf8 45%, #8b7cf6 100%);
+  --pm-gradient-soft: linear-gradient(135deg, rgba(91, 155, 213, 0.16), rgba(139, 124, 246, 0.16));
+
+  /* Depth */
+  --pm-shadow-sm: 0 1px 2px rgba(2, 8, 20, 0.4);
+  --pm-shadow-md: 0 6px 24px -8px rgba(2, 8, 20, 0.55);
+  --pm-shadow-lg: 0 24px 60px -20px rgba(2, 8, 20, 0.7);
+  --pm-ring: 0 0 0 1px rgba(91, 155, 213, 0.25);
+
+  --pm-radius: 14px;
+  --pm-radius-sm: 9px;
+}
+
+/* Dark theme: deepen the neutral surfaces toward a cool, premium near-black. */
+:root,
+[data-theme='dark'] {
+  --sl-color-accent-low: #102a43;
+  --sl-color-accent: #4a90c4;
+  --sl-color-accent-high: #bfe0f6;
+
+  --sl-color-bg: #0a0f17;
+  --sl-color-bg-nav: rgba(10, 15, 23, 0.72);
+  --sl-color-bg-sidebar: #0c121c;
+  --sl-color-bg-inline-code: rgba(91, 155, 213, 0.12);
+
+  --sl-color-hairline: rgba(148, 178, 214, 0.12);
+  --sl-color-hairline-light: rgba(148, 178, 214, 0.18);
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.4);
 }
 
 [data-theme='light'] {
-  --sl-color-accent-low: #d0e4f5;
-  --sl-color-accent: #336791;
-  --sl-color-accent-high: #1a4a72;
+  --sl-color-accent-low: #d6e8f7;
+  --sl-color-accent: #2c6291;
+  --sl-color-accent-high: #16395a;
+
+  --sl-color-bg: #f7fafd;
+  --sl-color-bg-nav: rgba(247, 250, 253, 0.78);
+  --sl-color-bg-sidebar: #eef4fa;
+
+  --pm-shadow-sm: 0 1px 2px rgba(15, 40, 70, 0.08);
+  --pm-shadow-md: 0 10px 30px -12px rgba(15, 40, 70, 0.18);
+  --pm-shadow-lg: 0 28px 64px -24px rgba(15, 40, 70, 0.25);
+  --pm-gradient-soft: linear-gradient(135deg, rgba(51, 103, 145, 0.10), rgba(139, 124, 246, 0.10));
 }
 
-/* Progress tracker */
+/* ----- Global polish ------------------------------------------------------ */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle ambient glow behind the page content (dark theme only). */
+[data-theme='dark'] body {
+  background-image:
+    radial-gradient(60rem 60rem at 85% -10%, rgba(56, 189, 248, 0.07), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, rgba(139, 124, 246, 0.06), transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Crisper headings with tighter tracking. */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  letter-spacing: -0.018em;
+  font-weight: 650;
+}
+
+/* Accent rule under section headings for editorial rhythm. */
+.sl-markdown-content h2 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+/* Gradient page title (the h1 rendered from frontmatter). */
+.sl-markdown-content > h1:first-child,
+.content-panel h1 {
+  background: var(--pm-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Frosted, blurred top nav. */
+.header {
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+/* Site title weight. */
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Links: animated underline reveal. */
+.sl-markdown-content a:not(.sl-flexible-grid a):not(:where(.not-content *)) {
+  text-decoration: none;
+  background-image: linear-gradient(var(--pm-brand-bright), var(--pm-brand-bright));
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 0% 1.5px;
+  transition: background-size 0.25s ease, color 0.2s ease;
+}
+
+.sl-markdown-content a:not(.sl-flexible-grid a):not(:where(.not-content *)):hover {
+  background-size: 100% 1.5px;
+}
+
+/* Sidebar entries: rounded, with an accent bar on the active item. */
+.sidebar-content a {
+  border-radius: 8px;
+  transition: background-color 0.18s ease, color 0.18s ease, padding-left 0.18s ease;
+}
+
+.sidebar-content a:hover {
+  background: var(--pm-gradient-soft);
+}
+
+.sidebar-content a[aria-current='page'] {
+  position: relative;
+  font-weight: 650;
+  background: var(--pm-gradient-soft);
+  box-shadow: inset 2px 0 0 var(--pm-brand-bright);
+}
+
+/* Inline code: pill with a hint of brand tint. */
+.sl-markdown-content :not(pre) > code {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 6px;
+  padding: 0.12em 0.4em;
+  font-size: 0.86em;
+}
+
+/* Code blocks: deeper surface, soft shadow, refined frame. */
+.sl-markdown-content .expressive-code .frame,
+.sl-markdown-content pre {
+  border-radius: var(--pm-radius-sm);
+  box-shadow: var(--pm-shadow-md);
+}
+
+.expressive-code .frame pre {
+  border: 1px solid var(--sl-color-hairline) !important;
+}
+
+/* Blockquotes / Asides: tasteful left accent + soft background. */
+.sl-markdown-content blockquote {
+  border-inline-start: 3px solid var(--pm-brand-bright);
+  background: var(--pm-gradient-soft);
+  border-radius: 0 var(--pm-radius-sm) var(--pm-radius-sm) 0;
+  padding: 0.75rem 1rem;
+}
+
+.starlight-aside {
+  border-radius: var(--pm-radius-sm);
+  border-inline-start-width: 3px;
+  box-shadow: var(--pm-shadow-sm);
+}
+
+/* Tables in markdown: rounded frame, zebra rows, hover highlight. */
+.sl-markdown-content table:not(.comparison-table) {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--pm-radius-sm);
+  overflow: hidden;
+  box-shadow: var(--pm-shadow-sm);
+}
+
+.sl-markdown-content table:not(.comparison-table) th {
+  background: var(--pm-gradient-soft);
+  font-weight: 650;
+}
+
+.sl-markdown-content table:not(.comparison-table) tbody tr:nth-child(even) {
+  background: rgba(148, 178, 214, 0.04);
+}
+
+.sl-markdown-content table:not(.comparison-table) tbody tr:hover {
+  background: var(--pm-gradient-soft);
+}
+
+/* ----- Splash hero (index page) ------------------------------------------- */
+.hero h1 {
+  background: var(--pm-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  filter: drop-shadow(0 6px 20px rgba(56, 189, 248, 0.18));
+}
+
+.hero .tagline {
+  max-width: 44ch;
+  color: var(--sl-color-gray-2);
+}
+
+/* Primary CTA: gradient fill with lift + glow on hover. */
+.hero .actions a[class*='primary'] {
+  background: var(--pm-gradient);
+  border: none;
+  color: #06121f;
+  font-weight: 650;
+  box-shadow: 0 10px 30px -10px rgba(56, 189, 248, 0.5);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.hero .actions a[class*='primary']:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+  box-shadow: 0 16px 40px -10px rgba(56, 189, 248, 0.65);
+}
+
+.hero .actions a[class*='minimal'] {
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 999px;
+  transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.hero .actions a[class*='minimal']:hover {
+  transform: translateY(-2px);
+  border-color: var(--pm-brand-bright);
+  background: var(--pm-gradient-soft);
+}
+
+/* ----- Cards (CardGrid) --------------------------------------------------- */
+.card {
+  position: relative;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--pm-radius);
+  background:
+    linear-gradient(var(--sl-color-bg), var(--sl-color-bg)) padding-box,
+    var(--pm-gradient-soft) border-box;
+  box-shadow: var(--pm-shadow-sm);
+  overflow: hidden;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+/* Gradient sheen that fades in on hover. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--pm-gradient-soft);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--pm-shadow-lg);
+  border-color: rgba(91, 155, 213, 0.4);
+}
+
+.card:hover::before {
+  opacity: 1;
+}
+
+.card .icon {
+  background: var(--pm-gradient-soft);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 10px;
+  padding: 6px;
+  color: var(--pm-brand-bright);
+}
+
+.card .title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* ----- Progress tracker (roadmap) ----------------------------------------- */
 .progress-tracker {
   margin: 2rem 0;
 }
 
 .phase-block {
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 8px;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--pm-radius);
   padding: 1.5rem;
   margin-bottom: 1.5rem;
-  background: var(--sl-color-black);
+  background: var(--sl-color-bg-sidebar);
+  box-shadow: var(--pm-shadow-sm);
+  transition: box-shadow 0.22s ease, transform 0.22s ease;
+}
+
+.phase-block:hover {
+  box-shadow: var(--pm-shadow-md);
 }
 
 [data-theme='light'] .phase-block {
-  background: var(--sl-color-gray-7);
+  background: #ffffff;
 }
 
 .phase-header {
@@ -36,8 +332,9 @@
 
 .phase-title {
   font-size: 1.1rem;
-  font-weight: 600;
+  font-weight: 650;
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
 .phase-badge {
@@ -50,21 +347,21 @@
 }
 
 .badge-active {
-  background: #1a4a24;
+  background: rgba(74, 222, 128, 0.12);
   color: #4ade80;
-  border: 1px solid #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.5);
 }
 
 .badge-planned {
-  background: #1a2a3a;
+  background: rgba(96, 165, 250, 0.12);
   color: #60a5fa;
-  border: 1px solid #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.5);
 }
 
 .badge-completed {
-  background: #333;
-  color: #aaa;
-  border: 1px solid #555;
+  background: rgba(148, 178, 214, 0.1);
+  color: #9bb4ce;
+  border: 1px solid rgba(148, 178, 214, 0.35);
 }
 
 [data-theme='light'] .badge-active {
@@ -80,14 +377,14 @@
 }
 
 [data-theme='light'] .badge-completed {
-  background: #f3f4f6;
-  color: #555;
-  border-color: #555;
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #94a3b8;
 }
 
 .phase-progress-bar-wrap {
-  height: 6px;
-  background: var(--sl-color-gray-5);
+  height: 8px;
+  background: rgba(148, 178, 214, 0.14);
   border-radius: 999px;
   margin-bottom: 1.25rem;
   overflow: hidden;
@@ -96,12 +393,28 @@
 .phase-progress-bar {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.6s ease;
+  transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
 }
 
-.bar-green { background: #4ade80; }
-.bar-blue  { background: #60a5fa; }
-.bar-gray  { background: #555; }
+/* Animated sheen sweeping across progress bars. */
+.phase-progress-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-100%);
+  animation: pm-sheen 2.6s ease-in-out infinite;
+}
+
+@keyframes pm-sheen {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(100%); }
+}
+
+.bar-green { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.bar-blue  { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+.bar-gray  { background: linear-gradient(90deg, #64748b, #94a3b8); }
 
 .task-list {
   list-style: none;
@@ -117,12 +430,14 @@
   align-items: center;
   gap: 0.6rem;
   font-size: 0.9rem;
-  padding: 0.4rem 0.5rem;
-  border-radius: 5px;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  transition: background-color 0.18s ease, transform 0.18s ease;
 }
 
 .task-item:hover {
-  background: var(--sl-color-gray-6);
+  background: var(--pm-gradient-soft);
+  transform: translateX(2px);
 }
 
 .task-icon {
@@ -135,39 +450,68 @@
 .task-wip    { color: var(--sl-color-text-accent); font-style: italic; }
 .task-todo   { color: var(--sl-color-gray-3); }
 
-/* Hero extras */
+/* ----- Warning banner (hero) ---------------------------------------------- */
 .warning-banner {
-  border: 1px solid #f59e0b;
-  background: #1c1400;
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.04));
+  border-radius: var(--pm-radius-sm);
+  padding: 0.85rem 1.1rem;
   font-size: 0.9rem;
   color: #fcd34d;
   margin-bottom: 1.5rem;
+  box-shadow: var(--pm-shadow-sm);
 }
 
 [data-theme='light'] .warning-banner {
-  background: #fffbeb;
+  background: linear-gradient(135deg, #fffbeb, #fef3c7);
   color: #92400e;
   border-color: #f59e0b;
 }
 
+/* ----- Comparison table (hero) -------------------------------------------- */
 .comparison-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.9rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--pm-radius-sm);
+  overflow: hidden;
+  box-shadow: var(--pm-shadow-sm);
 }
 
 .comparison-table th,
 .comparison-table td {
-  padding: 0.6rem 0.9rem;
-  border: 1px solid var(--sl-color-gray-5);
+  padding: 0.65rem 0.95rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
   text-align: center;
 }
 
+.comparison-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .comparison-table th {
-  background: var(--sl-color-gray-6);
-  font-weight: 600;
+  background: var(--pm-gradient-soft);
+  font-weight: 650;
+}
+
+/* Spotlight the project's own column. */
+.comparison-table th:last-child {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(139, 124, 246, 0.22));
+  color: var(--sl-color-white);
+}
+
+.comparison-table td:last-child {
+  background: var(--pm-gradient-soft);
+}
+
+.comparison-table tbody tr:hover td {
+  background: rgba(148, 178, 214, 0.06);
+}
+
+.comparison-table tbody tr:hover td:last-child {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(139, 124, 246, 0.16));
 }
 
 .comparison-table td:first-child {
@@ -176,6 +520,47 @@
   font-size: 0.85rem;
 }
 
-.tick   { color: #4ade80; }
-.cross  { color: #f87171; }
+.tick    { color: #4ade80; font-weight: 700; }
+.cross   { color: #f87171; }
 .partial { color: #fbbf24; }
+
+/* ----- Custom scrollbar --------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 155, 213, 0.5) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--pm-brand-bright), var(--pm-violet));
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(var(--pm-cyan), var(--pm-violet));
+  background-clip: padding-box;
+}
+
+/* ----- Accessibility ------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid var(--pm-brand-bright);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
