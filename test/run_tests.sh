@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PG_CONFIG="${PG_CONFIG:-pg_config}"
+ENVIRONMENT="${ENVIRONMENT:-"CI"}"
 
 PG_BIN="$("$PG_CONFIG" --bindir)"
 PG_LIBDIR="$("$PG_CONFIG" --pkglibdir)"
@@ -63,7 +64,16 @@ cd "$ROOT_DIR"
 make all PG_CONFIG="$PG_CONFIG" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 echo "=== Installing pg_ext_memcheck to $PG_LIBDIR ==="
-sudo make install PG_CONFIG="$PG_CONFIG"
+
+if [ "$ENVIRONMENT" = "CI" ]; then
+    # In CI, we want to install to the system PostgreSQL so that pg_regress can find the extension
+    echo "CI environment detected; installing to system PostgreSQL directories"
+    sudo make install PG_CONFIG="$PG_CONFIG"
+else
+    # In local/dev environments, install to the current user's PostgreSQL directories (which may require PG_CONFIG override)
+    echo "Local environment detected; installing to user PostgreSQL directories"
+    make install PG_CONFIG="$PG_CONFIG"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 2 — initdb a fresh cluster
