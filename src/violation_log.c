@@ -67,6 +67,10 @@ violation_log_write(const char *check_type, const char *severity, const char *de
 
         // Update the head position
         violation_log->head = (violation_log->head + 1) % VIOLATION_LOG_SIZE;
+
+        // count tracks how many slots have been written (capped at ring size)
+        if (violation_log->count < VIOLATION_LOG_SIZE)
+            violation_log->count++;
     }
 
     // Release the lock

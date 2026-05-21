@@ -58,7 +58,6 @@ probe_register(const char *seg_name, Size declared_size)
         return;
     }
 
-    slot = probe_registry->count;
     LWLockRelease(&probe_registry->lock);
 
     /*
@@ -75,6 +74,18 @@ probe_register(const char *seg_name, Size declared_size)
     }
 
     LWLockAcquire(&probe_registry->lock, LW_EXCLUSIVE);
+
+    /* Re-check capacity after re-acquiring the lock; a concurrent backend may
+     * have filled the last slot between our two lock acquisitions. */
+    if (probe_registry->count >= SHMEM_PROBE_MAX_SEGMENTS)
+    {
+        LWLockRelease(&probe_registry->lock);
+        elog(WARNING, "pg_ext_memcheck: probe registry full, cannot register '%s'",
+             seg_name);
+        return;
+    }
+
+    slot = probe_registry->count;
     strlcpy(probe_registry->records[slot].seg_name, seg_name,
             sizeof(probe_registry->records[slot].seg_name));
     probe_registry->records[slot].declared_size = declared_size;

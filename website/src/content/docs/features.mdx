@@ -151,8 +151,36 @@ detail:         "DSM segment handle ... was attached but not detached (size=... 
 
 ---
 
-## Context growth measurement
+## Context growth measurement (`ctx_bloat`)
 
-Measures the total bytes allocated in the `MemoryContext` tree across repeated invocations. A steady increase indicates a slow leak that would eventually exhaust memory under load.
+Measures per-`MemoryContext` used bytes at **log-spaced checkpoints** across repeated invocations. A context that grows monotonically and exceeds the configured threshold is emitted as a `ctx_bloat` violation — distinct from the per-query `context_leak` violation type.
 
-**How it works:** `context_walker` records `totalSpace` from `MemoryContextStats()` at the start and end of each test window. The delta is logged. Over a configurable number of iterations, a monotonically increasing delta is flagged as `context_bloat`.
+**How it works:**
+
+1. Checkpoint iterations are computed as powers of 10 up to `iterations` (e.g., 1 → 10 → 100 → 1000), capped at 8 checkpoints.
+2. At each checkpoint, `context_walker` snapshots every context in the `MemoryContext` tree and records used bytes (allocated − freed), keyed by *(name, depth, parent hash)*.
+3. After all iterations finish, each context is tested: monotonic growth across ≥ 2 checkpoints, total growth ≥ `bloat_min_bytes` (default 16 KiB).
+4. Growth shape is classified as **linear** or **superlinear** (late-interval rate > 1.5× early-interval rate). Superlinear growth bumps the severity one level.
+
+**Severity levels:**
+
+| Level | Base condition | Escalation |
+|---|---|---|
+| `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear |
+| `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear |
+| `INFO` | Total growth ≥ `bloat_min_bytes` | — |
+
+```sql
+SELECT ext_memcheck.run_scenario('growth_benchmark', 500, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT check_type, severity, detail FROM ext_memcheck.violation_log WHERE check_type = 'ctx_bloat';
+```
+
+pg_ext_memcheck will report:
+```
+check_type:  ctx_bloat
+severity:    WARNING
+detail:      "context 'MyWorkCtx' (depth 3): linear bloat over 100 iters, used 0->73728 bytes (+73728); rate early=1.0 late=1.0 B/iter"
+```
+
+**Tuning:** Adjust `pg_ext_memcheck.bloat_min_bytes` to control the noise floor. Set it lower for maximum sensitivity; raise it to suppress expected background growth.

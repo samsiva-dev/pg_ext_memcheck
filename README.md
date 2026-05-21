@@ -90,12 +90,14 @@ A violation row looks like this:
 | `id` | `1` |
 | `ts` | `2026-05-10 14:32:01 UTC` |
 | `backend_pid` | `12345` |
-| `check_type` | `context_leak`, `wrong_ctx_alloc`, `shmem_overrun`, `dsm_leak` |
+| `check_type` | `context_leak`, `wrong_ctx_alloc`, `ctx_bloat`, `shmem_overrun`, `dsm_leak` |
 | `severity` | `ERROR`, `WARNING`, `INFO` |
 | `detail` | `"Context present in post-query snapshot but not pre-query"` |
 | `source_lib` | `your_extension.dylib` |
 
 ### Severity thresholds
+
+For `context_leak` and `wrong_ctx_alloc` violations:
 
 | Level | Condition |
 |---|---|
@@ -103,14 +105,24 @@ A violation row looks like this:
 | `WARNING` | Net context growth ≥ 64 KiB and < 1 MiB |
 | `INFO` | Net context growth ≥ `min_leak_bytes` (default 8 KiB) |
 
+For `ctx_bloat` violations (emitted by `growth_benchmark`):
+
+| Level | Base condition | Escalation |
+|---|---|---|
+| `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear growth |
+| `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear growth |
+| `INFO` | Total growth ≥ `bloat_min_bytes` (default 16 KiB) | — |
+
+Growth is classified as **superlinear** when the per-iteration rate in the final checkpoint interval exceeds 1.5× the rate in the first interval.
+
 ---
 
 ## Stress scenarios
 
-`growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`, `wrong_context_probe`) are planned for Phase 2.
+`growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are Phase 1 scenarios available now. `wrong_context_probe` is a Phase 2 scenario that is now implemented. Additional Phase 2 scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are still planned.
 
 ```sql
--- Measures context growth over repeated calls — catches slow cumulative leaks
+-- Measures per-context bloat at log-spaced checkpoints; emits ctx_bloat violations
 SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 100, workload := 'SELECT your_extension.some_function(''input'');');
 
 -- Tests memory cleanup on transaction abort
@@ -119,14 +131,18 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 -- Plants sentinel bytes past shmem boundaries and verifies integrity after the workload
 SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
 
+-- Focused wrong-context allocation check — skips context_leak diff, runs only wrong_ctx_alloc detection
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 50, 'SELECT your_extension.some_function(''input'')');
+
 SELECT ext_memcheck.flush_violations();
 ```
 
 | Scenario | What it catches |
 |---|---|
-| `growth_benchmark` | Slow cumulative leaks; monotonic context bloat across repeated calls |
+| `growth_benchmark` | Per-context monotonic bloat measured at log-spaced checkpoints (1, 10, 100, …); emits `ctx_bloat` violations with linear/superlinear shape classification |
 | `tx_abort_loop` | Context leaks that only manifest on transaction abort; resources not cleaned up on rollback |
 | `shmem_sentinel_probe` | Off-by-one writes past a segment's declared shmem boundary |
+| `wrong_context_probe` | Allocations that land in `TopMemoryContext`, `CacheMemoryContext`, or other long-lived contexts; emits `wrong_ctx_alloc` violations only — `context_leak` diff is intentionally skipped |
 
 ---
 
@@ -137,7 +153,8 @@ Set in `postgresql.conf` or with `SET` at session scope (no restart required).
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. |
-| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (bytes) is silently ignored. |
+| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (bytes) is silently ignored by the leak detector. |
+| `pg_ext_memcheck.bloat_min_bytes` | `int` | `16384` | Minimum cumulative growth (bytes) for a context to be reported as bloating by `growth_benchmark`. |
 
 ```sql
 -- Check both planner and executor phases
@@ -194,7 +211,7 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations
 SELECT * FROM ext_memcheck.end();
 ```
 
-After 1000 iterations the `TopMemoryContext` leak (~8 MB) escalates to `ERROR`; the wrong-context allocation fires as `WARNING`; the planner leak ctx stays `INFO` (< 64 KiB). See the [full walkthrough](https://pg-ext-memcheck.vercel.app/testing-buggy-extensions/) on the docs site.
+After 1000 iterations the `TopMemoryContext` bloat (~8 MB) escalates to `ERROR` (superlinear growth bumps it further if the rate accelerates); the wrong-context allocation fires as `WARNING`; shorter-lived contexts that grow by less than 16 KiB are silently filtered by `bloat_min_bytes`. See the [full walkthrough](https://pg-ext-memcheck.vercel.app/testing-buggy-extensions/) on the docs site.
 
 ---
 
@@ -263,7 +280,7 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 
 **Phase 1 (current):** Context leak detection, wrong-context allocation detection, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
 
-**Phase 2:** BGWorker crash harness, full stress scenario catalog (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`, `wrong_context_probe`).
+**Phase 2 (in progress):** `wrong_context_probe` scenario ✓. BGWorker crash harness, remaining stress scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`).
 
 See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
 

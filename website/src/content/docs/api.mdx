@@ -105,7 +105,7 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scenario_name` | `text` | — | Scenario name. Currently available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`. See [Stress Scenarios](/scenarios/). |
+| `scenario_name` | `text` | — | Scenario name. Phase 1: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`. Phase 2 (done): `wrong_context_probe`. See [Stress Scenarios](/scenarios/). |
 | `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
 | `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
 
@@ -188,6 +188,25 @@ Set these in `postgresql.conf` or with `SET` at session scope (`PGC_USERSET` —
 |---|---|---|---|
 | `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | Controls which parts of query execution are instrumented. See below. |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored. |
+| `pg_ext_memcheck.bloat_min_bytes` | `int` | `16384` | Minimum cumulative growth in bytes for a context to be reported as bloating by `growth_benchmark`. Contexts that grow by less than this amount across checkpoints are silently ignored. |
+
+---
+
+## pg_ext_memcheck.bloat_min_bytes
+
+Minimum cumulative memory growth (in bytes) that a `MemoryContext` must show across `growth_benchmark` checkpoints before a `ctx_bloat` violation is emitted. Contexts whose net growth falls below this threshold are silently ignored.
+
+```sql
+-- Raise the threshold to 64 KiB to reduce noise
+SET pg_ext_memcheck.bloat_min_bytes = 65536;
+
+-- Lower to 0 to report every context that grew at all
+SET pg_ext_memcheck.bloat_min_bytes = 0;
+```
+
+**Default:** `16384` (16 KiB)  
+**Range:** `0` – `INT_MAX`  
+**Scope:** `PGC_USERSET` — effective immediately, no restart required.
 
 ---
 
@@ -228,5 +247,5 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 | `wrong_context` | 1 | Available | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
 | `shmem_overrun` | 2 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
 | `dsm_leak` | 2 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
+| `ctx_bloat` | 1 | Available | A `MemoryContext` grew monotonically across two or more log-spaced checkpoints in a `growth_benchmark` run. Severity reflects total growth; superlinear acceleration bumps severity one level. |
 | `use_after_reset` | 2 | Planned | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
-| `context_bloat` | 2 | Planned | Total allocated bytes in the context tree increased monotonically across all iterations of a growth benchmark scenario. |
