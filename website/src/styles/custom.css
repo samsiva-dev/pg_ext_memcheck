@@ -146,11 +146,18 @@ html {
   background: var(--pm-gradient-soft);
 }
 
-.sidebar-content a[aria-current='page'] {
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
   position: relative;
   font-weight: 650;
+  color: var(--sl-color-text-accent);
   background: var(--pm-gradient-soft);
-  box-shadow: inset 2px 0 0 var(--pm-brand-bright);
+  box-shadow: inset 3px 0 0 var(--pm-brand-bright);
+}
+
+[data-theme='dark'] .sidebar-content a[aria-current='page'],
+[data-theme='dark'] .sidebar-content a[aria-current='page']:hover {
+  color: var(--sl-color-white);
 }
 
 /* Inline code: pill with a hint of brand tint. */
@@ -166,6 +173,11 @@ html {
 .sl-markdown-content pre {
   border-radius: var(--pm-radius-sm);
   box-shadow: var(--pm-shadow-md);
+}
+
+[data-theme='light'] .sl-markdown-content .expressive-code .frame,
+[data-theme='light'] .sl-markdown-content pre {
+  box-shadow: var(--pm-shadow-sm);
 }
 
 .expressive-code .frame pre {
@@ -242,8 +254,10 @@ html {
 }
 
 .hero .actions a[class*='minimal'] {
+  padding: 0.5rem 1.25rem;
   border: 1px solid var(--sl-color-hairline-light);
   border-radius: 999px;
+  box-sizing: border-box;
   transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
 }
 
@@ -470,7 +484,8 @@ html {
 
 /* ----- Comparison table (hero) -------------------------------------------- */
 .comparison-table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.9rem;
@@ -523,6 +538,51 @@ html {
 .tick    { color: #4ade80; font-weight: 700; }
 .cross   { color: #f87171; }
 .partial { color: #fbbf24; }
+
+/* ----- Prev / Next pagination --------------------------------------------- */
+.pagination-links a {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--pm-radius);
+  background:
+    linear-gradient(var(--sl-color-bg), var(--sl-color-bg)) padding-box,
+    var(--pm-gradient-soft) border-box;
+  box-shadow: var(--pm-shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.pagination-links a:hover {
+  transform: translateY(-3px);
+  border-color: rgba(91, 155, 213, 0.45);
+  box-shadow: var(--pm-shadow-md);
+}
+
+/* Direction label gets the brand tint; page title stays prominent. */
+.pagination-links a > span {
+  color: var(--sl-color-gray-3);
+}
+
+.pagination-links a .link-title {
+  color: var(--sl-color-white);
+  font-weight: 650;
+}
+
+.pagination-links a:hover .link-title {
+  color: var(--sl-color-text-accent);
+}
+
+/* Arrow icon nudges in the travel direction on hover. */
+.pagination-links a svg {
+  color: var(--pm-brand-bright);
+  transition: transform 0.2s ease;
+}
+
+.pagination-links a[rel='next']:hover svg {
+  transform: translateX(3px);
+}
+
+.pagination-links a[rel='prev']:hover svg {
+  transform: translateX(-3px);
+}
 
 /* ----- Custom scrollbar --------------------------------------------------- */
 * {
