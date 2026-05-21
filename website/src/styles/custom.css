@@ -584,6 +584,90 @@ html {
   transform: translateX(-3px);
 }
 
+/* ----- Contained, centered app shell -------------------------------------
+   Cap the whole layout to a max width and center it on wide screens. The fixed
+   header bar keeps its full-bleed background, but its contents — along with the
+   sidebar, content column, and TOC — are inset by an equal gutter so everything
+   lines up within a centered band. Only applies once the desktop layout (and
+   the persistent sidebar) kicks in at 50rem. */
+:root {
+  --pm-shell: 90rem;
+}
+
+@media (min-width: 50rem) {
+  :root {
+    --pm-gutter: max(0rem, calc((100vw - var(--pm-shell)) / 2));
+  }
+
+  /* Header bar stays full width; pad its contents in by the gutter. */
+  .page > .header {
+    padding-inline: calc(var(--sl-nav-pad-x) + var(--pm-gutter)) !important;
+  }
+
+  /* Fixed left sidebar shifts inward to the shell's left edge. */
+  .sidebar-pane {
+    inset-inline-start: var(--pm-gutter) !important;
+  }
+
+  /* Content clears the shifted sidebar and stops at the right gutter. */
+  .main-frame {
+    padding-inline-start: calc(var(--sl-content-inline-start) + var(--pm-gutter)) !important;
+    padding-inline-end: var(--pm-gutter) !important;
+  }
+}
+
+/* ----- Breadcrumbs -------------------------------------------------------- */
+.breadcrumbs {
+  margin-bottom: 0.5rem;
+}
+
+.breadcrumbs ol {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.breadcrumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--sl-color-gray-3);
+}
+
+/* Chevron separator drawn from a rotated corner. */
+.breadcrumbs li + li::before {
+  content: '';
+  width: 0.36rem;
+  height: 0.36rem;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  opacity: 0.45;
+}
+
+.breadcrumbs a {
+  color: var(--sl-color-gray-3);
+  text-decoration: none;
+  border-radius: 5px;
+  padding: 0.1rem 0.35rem;
+  transition: color 0.18s ease, background-color 0.18s ease;
+}
+
+.breadcrumbs a:hover {
+  color: var(--sl-color-text-accent);
+  background: var(--pm-gradient-soft);
+}
+
+.breadcrumbs [aria-current='page'] {
+  color: var(--sl-color-text);
+  font-weight: 600;
+}
+
 /* ----- Custom scrollbar --------------------------------------------------- */
 * {
   scrollbar-width: thin;

@@ -1,0 +1,59 @@
+---
+// Overrides Starlight's PageTitle to render "Home › Group › Page" breadcrumbs
+// above the page title, derived from the live sidebar route data.
+const PAGE_TITLE_ID = '_top';
+
+const { entry, sidebar } = Astro.locals.starlightRoute;
+
+interface SidebarLink {
+  type: 'link';
+  label: string;
+  isCurrent: boolean;
+}
+interface SidebarGroup {
+  type: 'group';
+  label: string;
+  entries: SidebarEntry[];
+}
+type SidebarEntry = SidebarLink | SidebarGroup;
+
+function findTrail(items: SidebarEntry[], trail: string[] = []): string[] | null {
+  for (const item of items) {
+    if (item.type === 'group') {
+      const found = findTrail(item.entries, [...trail, item.label]);
+      if (found) return found;
+    } else if (item.isCurrent) {
+      return [...trail, item.label];
+    }
+  }
+  return null;
+}
+
+const trail = findTrail((sidebar as SidebarEntry[]) ?? []) ?? [entry.data.title];
+const groups = trail.slice(0, -1);
+const current = trail[trail.length - 1];
+---
+
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  <ol>
+    <li><a href="/">Home</a></li>
+    {groups.map((label) => (
+      <li><span>{label}</span></li>
+    ))}
+    <li aria-current="page"><span>{current}</span></li>
+  </ol>
+</nav>
+
+<h1 id={PAGE_TITLE_ID}>{entry.data.title}</h1>
+
+<style>
+  @layer starlight.core {
+    h1 {
+      margin-top: 0.5rem;
+      font-size: var(--sl-text-h1);
+      line-height: var(--sl-line-height-headings);
+      font-weight: 600;
+      color: var(--sl-color-white);
+    }
+  }
+</style>
