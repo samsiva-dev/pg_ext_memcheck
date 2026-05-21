@@ -12,6 +12,9 @@ export default defineConfig({
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/samsiva-dev/pg_ext_memcheck' },
 			],
 			customCss: ['./src/styles/custom.css'],
+			components: {
+				PageTitle: './src/components/PageTitle.astro',
+			},
 			sidebar: [
 				{
 					label: 'Getting Started',
