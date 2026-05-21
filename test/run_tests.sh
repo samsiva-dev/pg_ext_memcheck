@@ -99,6 +99,7 @@ cat >> "$PGDATA/postgresql.conf" << EOF
 # pg_ext_memcheck regression test overrides
 port                    = $PGPORT
 listen_addresses        = '127.0.0.1'
+unix_socket_directories = '/tmp'
 shared_preload_libraries = 'pg_ext_memcheck'
 log_min_messages        = warning
 EOF
