@@ -493,7 +493,7 @@ Total: ~155 KB shmem
 
 ### Prerequisites
 - PostgreSQL source tree (for headers: `memutils.h`, `dsm.h`, `shmem.h`, `executor/executor.h`)
-- PG version: 14+ (earlier versions have different `MemoryContextData` layout)
+- PG version: 15+ (earlier versions have different `MemoryContextData` layout)
 - Build: standard `pgxs` Makefile
 
 ### Directory Layout

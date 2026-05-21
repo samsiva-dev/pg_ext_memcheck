@@ -33,7 +33,7 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 
 ## Prerequisites
 
-- PostgreSQL 14 or later (server headers required)
+- PostgreSQL 15 or later (server headers required)
 - `pg_config` in your `PATH`
 - A C compiler (`gcc` or `clang`)
 
@@ -180,7 +180,7 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 | Limitation | Detail |
 |---|---|
 | Not production-safe | Instruments internals not designed for runtime inspection |
-| PG 14+ only | Relies on `MemoryContextData` layout introduced in PG 14 |
+| PG 15+ only | Relies on `MemoryContextData` layout introduced in PG 15 |
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
 | Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
