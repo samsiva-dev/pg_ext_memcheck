@@ -19,6 +19,8 @@
 // Older entries will be overwritten when the buffer is full.
 #define MEMCHECK_MAX_VIOLATIONS 2048
 
+extern int violation_log_tranche_id;
+
 
 // ViolationEntry represents a single memory violation detected by the extension.
 typedef struct ViolationEntry {

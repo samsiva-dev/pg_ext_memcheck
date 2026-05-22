@@ -32,6 +32,8 @@
 
 #define VIOLATION_LOG_SIZE MEMCHECK_MAX_VIOLATIONS
 
+int violation_log_tranche_id = 0; // Tranche ID for the violation log LWLock, initialized in shmem_startup_hook
+
 // Logs a violation to the shared ViolationLog with the given details. Thread-safe via LWLock.
 void
 violation_log_write(const char *check_type, const char *severity, const char *detail, const char *source_lib)

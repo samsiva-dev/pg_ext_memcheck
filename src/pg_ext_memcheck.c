@@ -147,6 +147,11 @@ static void memcheck_shmem_startup(void)
      * LWLockNewTrancheId() accesses a shared-memory counter that does
      * not exist until after CreateSharedMemoryAndSemaphores() runs.
      */
+    if (violation_log_tranche_id == 0) 
+    {
+        violation_log_tranche_id = LWLockNewTrancheId();
+        LWLockRegisterTranche(violation_log_tranche_id, "pg_ext_memcheck_violation_log");
+    }
     if (dsm_tracker_tranche_id == 0)
     {
         dsm_tracker_tranche_id = LWLockNewTrancheId();
@@ -164,6 +169,7 @@ static void memcheck_shmem_startup(void)
     if (!found)    {
         // First time initialization, zero out the log
         memset(violation_log, 0, sizeof(ViolationLog));
+        LWLockInitialize(&violation_log->lock, violation_log_tranche_id);
     }
 
     // Allocate shared memory for the DSM tracker state
