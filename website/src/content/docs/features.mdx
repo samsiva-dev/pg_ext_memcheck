@@ -104,7 +104,7 @@ detail:         "Sentinel byte overwritten past 'pg_ext_memcheck ViolationLog' (
 
 Dynamic Shared Memory (DSM) segments must be explicitly detached when no longer needed. Leaked segments persist until the postmaster exits, consuming shared memory pool capacity.
 
-**How it works:** `dsm_tracker.c` maintains a `DsmTrackerState` in shared memory — a fixed-size ring of `DsmSegmentRecord` entries protected by an LWLock. `dsm_tracker_record_attach()` is called whenever a DSM segment is explicitly tracked via `ext_memcheck.track_dsm_handle()`. At the end of a test window (`ext_memcheck.end()`), `dsm_tracker_check_leaks()` scans all recorded segments and logs any that are still attached as `dsm_leak` violations.
+**How it works:** `dsm_tracker.c` maintains a `DsmTrackerState` in shared memory — a fixed-size ring of `DsmSegmentRecord` entries protected by an LWLock. DSM tracking is **manual-only**: `ext_memcheck.track_dsm_handle()` records a handle via `dsm_tracker_record_handle_observe()`, temporarily attaching to read the segment size and then detaching immediately. Live/detached status is determined at query time by probing the handle with `dsm_attach`. At the end of a test window (`ext_memcheck.end()`), `dsm_tracker_check_leaks()` scans all recorded segments and logs any that are still reachable as `dsm_leak` violations.
 
 ```sql
 -- Manually register a DSM handle for lifecycle tracking
