@@ -135,45 +135,55 @@ violation_log_flush(PG_FUNCTION_ARGS)
     /* Suppress executor hook monitoring for our own SPI queries. */
     memcheck_in_internal_query = true;
 
-    if (SPI_connect() != SPI_OK_CONNECT)
+    PG_TRY();
     {
+        if (SPI_connect() != SPI_OK_CONNECT)
+        {
+            elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        }
+
+        for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+        {
+            Oid             argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
+            Datum           values[6];
+            char            nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
+            ViolationEntry *e           = &entries[i];
+    
+            /* Skip slots that have never been written (check_type is empty). */
+            if (e->check_type[0] == '\0')
+                continue;
+            values[0] = TimestampTzGetDatum(e->ts);
+            values[1] = Int32GetDatum(e->backend_pid);
+            values[2] = CStringGetTextDatum(e->check_type);
+            values[3] = CStringGetTextDatum(e->severity);
+            values[4] = CStringGetTextDatum(e->detail);
+            values[5] = CStringGetTextDatum(e->source_lib);
+    
+            ret = SPI_execute_with_args(
+                "INSERT INTO ext_memcheck.violation_log "
+                "    (ts, backend_pid, check_type, severity, detail, source_lib) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                6, argtypes, values, nulls, false, 0);
+    
+            if (ret != SPI_OK_INSERT)
+                elog(ERROR, "pg_ext_memcheck: INSERT failed (SPI error %d)", ret);
+    
+            inserted++;
+        }
+        SPI_finish();
         memcheck_in_internal_query = false;
-        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
     }
-
-    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+    PG_CATCH();
     {
-        Oid             argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
-        Datum           values[6];
-        char            nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
-        ViolationEntry *e           = &entries[i];
-
-        /* Skip slots that have never been written (check_type is empty). */
-        if (e->check_type[0] == '\0')
-            continue;
-        values[0] = TimestampTzGetDatum(e->ts);
-        values[1] = Int32GetDatum(e->backend_pid);
-        values[2] = CStringGetTextDatum(e->check_type);
-        values[3] = CStringGetTextDatum(e->severity);
-        values[4] = CStringGetTextDatum(e->detail);
-        values[5] = CStringGetTextDatum(e->source_lib);
-
-        ret = SPI_execute_with_args(
-            "INSERT INTO ext_memcheck.violation_log "
-            "    (ts, backend_pid, check_type, severity, detail, source_lib) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
-            6, argtypes, values, nulls, false, 0);
-
-        if (ret != SPI_OK_INSERT)
-            elog(ERROR, "pg_ext_memcheck: INSERT failed (SPI error %d)", ret);
-
-        inserted++;
+        SPI_finish();
+        memcheck_in_internal_query = false;
+        PG_RE_THROW();
     }
+    PG_END_TRY();
 
-    SPI_finish();
-    memcheck_in_internal_query = false;
+    // Free the entries array allocated by violation_log_read_all
     pfree(entries);
-
+    
     /* Clear the shared-memory ring buffer after a successful flush. */
     LWLockAcquire(&violation_log->lock, LW_EXCLUSIVE);
     memset(violation_log->entries, 0, sizeof(violation_log->entries));

@@ -372,18 +372,27 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 
     memcheck_in_internal_query = true;
 
-    if (strcmp(scenario_str, "growth_benchmark") == 0) {
-        run_growth_benchmark(iterations, workload_str);
-    } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
-        run_tx_abort_loop(iterations, workload_str);
-    } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
-        run_shmem_sentinel_probe(iterations, workload_str);
-    } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
-        run_wrong_context_probe(iterations, workload_str);
-    } else {
+    PG_TRY(); 
+    {
+        if (strcmp(scenario_str, "growth_benchmark") == 0) {
+            run_growth_benchmark(iterations, workload_str);
+        } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
+            run_tx_abort_loop(iterations, workload_str);
+        } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
+            run_shmem_sentinel_probe(iterations, workload_str);
+        } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
+            run_wrong_context_probe(iterations, workload_str);
+        } else {
+            memcheck_in_internal_query = false;
+            elog(ERROR, "Unknown scenario: %s", scenario_str);
+        }
+    } 
+    PG_CATCH();
+    {
         memcheck_in_internal_query = false;
-        elog(ERROR, "Unknown scenario: %s", scenario_str);
+        PG_RE_THROW();
     }
+    PG_END_TRY();
 
     memcheck_in_internal_query = false;
 
