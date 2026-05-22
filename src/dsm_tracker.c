@@ -126,6 +126,12 @@ dsm_tracker_on_detach_cb(dsm_segment *seg, Datum arg)
 {
     dsm_handle handle = DatumGetUInt32(arg);
     int        i;
+
+    if (dsm_tracker_state == NULL)
+        return; /* tracker not initialized, should not happen but be defensive */
+    
+    // Acquire lock to safely update the tracker state and mark the segment as detached
+    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
     for (i = 0; i < dsm_tracker_state->count; i++)
     {
         DsmSegmentRecord *record = &dsm_tracker_state->segments[i];
@@ -136,4 +142,5 @@ dsm_tracker_on_detach_cb(dsm_segment *seg, Datum arg)
             break;
         }
     }
+    LWLockRelease(&dsm_tracker_state->lock); 
 }
