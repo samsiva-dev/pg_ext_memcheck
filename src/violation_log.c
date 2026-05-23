@@ -112,6 +112,59 @@ violation_log_read_all()
 }
 
 /*
+ * violation_log_read_session -- drain entries for a specific session.
+ *
+ * Returns entries where backend_pid == pid AND ts >= since.  Each matched slot
+ * is zeroed from the ring buffer atomically so that a second call (or a
+ * concurrent flush_violations()) never returns the same rows.
+ *
+ * Returns a palloc'd array; *out_count receives the number of entries.
+ * Caller is responsible for pfree'ing the returned array.
+ */
+ViolationEntry *
+violation_log_read_session(int pid, TimestampTz since, int *out_count)
+{
+    ViolationEntry *result;
+    int             n = 0;
+    int             i;
+
+    *out_count = 0;
+
+    if (violation_log == NULL)
+    {
+        elog(WARNING, "Violation log not initialized; cannot read violations");
+        return NULL;
+    }
+
+    result = (ViolationEntry *) palloc(sizeof(ViolationEntry) * VIOLATION_LOG_SIZE);
+
+    /* Exclusive lock: we read and zero matched slots in one critical section. */
+    LWLockAcquire(&violation_log->lock, LW_EXCLUSIVE);
+
+    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+    {
+        ViolationEntry *e = &violation_log->entries[i];
+
+        if (e->check_type[0] == '\0')
+            continue;                       /* empty slot */
+        if (e->backend_pid != pid || e->ts < since)
+            continue;                       /* different session */
+
+        result[n++] = *e;
+
+        /* Zero the slot so flush_violations() and future end() calls skip it. */
+        memset(e, 0, sizeof(ViolationEntry));
+        if (violation_log->count > 0)
+            violation_log->count--;
+    }
+
+    LWLockRelease(&violation_log->lock);
+
+    *out_count = n;
+    return result;
+}
+
+/*
  * violation_log_flush -- SQL-callable function.
  *
  * Reads all entries from the shared-memory ring buffer and inserts each

@@ -44,6 +44,15 @@ typedef struct ViolationLog {
 extern void violation_log_write(const char *check_type, const char *severity, const char *detail, const char *source_lib);
 extern ViolationEntry *violation_log_read_all(void);
 
+/*
+ * violation_log_read_session -- drain entries matching backend_pid == pid and ts >= since.
+ *
+ * Returns a palloc'd array of matched entries; *out_count receives the count.
+ * Matched slots are zeroed from the ring buffer atomically under an exclusive lock.
+ * This gives memcheck_end() session-scoped, non-repeatable read semantics.
+ */
+extern ViolationEntry *violation_log_read_session(int pid, TimestampTz since, int *out_count);
+
 // SQL-callable: flush shared-memory ring buffer into ext_memcheck.violation_log
 extern Datum violation_log_flush(PG_FUNCTION_ARGS);
 

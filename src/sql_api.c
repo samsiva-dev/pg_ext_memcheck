@@ -63,6 +63,15 @@ static Size ctx_used_bytes(const CtxSnapshot *s);
 static int build_checkpoints(int iterations, int *ckpts);
 static void record_checkpoint(BloatSeries **series, int *count, int *cap,
                 int ckpt_idx, MemoryContext bench_ctx);
+
+/*
+ * memcheck_session_start -- backend-local timestamp set by memcheck_begin().
+ *
+ * Used by memcheck_end() to drain only violations that belong to the current
+ * session (backend_pid == MyProcPid AND ts >= memcheck_session_start).
+ * DT_NOBEGIN means no session is active.
+ */
+static TimestampTz memcheck_session_start = DT_NOBEGIN;
 static void analyze_bloat(BloatSeries *series, int count, const int *ckpts);
 
 /* Helper function to calculate used bytes from a context snapshot. */
@@ -233,6 +242,9 @@ memcheck_begin(PG_FUNCTION_ARGS)
     else
         memcheck_mode = MEMCHECK_ALL; // Default to ALL if unrecognized
 
+    /* Record the session start time for scoped draining in memcheck_end(). */
+    memcheck_session_start = GetCurrentTimestamp();
+
      elog(INFO, "Memory check session started with mode: %s", mode_str);
 
      PG_RETURN_TEXT_P(cstring_to_text("Memory check session started."));
@@ -254,6 +266,7 @@ memcheck_end(PG_FUNCTION_ARGS)
     TupleDesc        tupdesc;
     Tuplestorestate *tupstore;
     ViolationEntry  *entries;
+    int              n_entries = 0;
     int              i;
 
     memcheck_mode = MEMCHECK_NONE;
@@ -292,26 +305,40 @@ memcheck_end(PG_FUNCTION_ARGS)
         rsinfo->setResult = tupstore;
         rsinfo->setDesc = tupdesc;
 
-        entries = violation_log_read_all();
-        if (entries != NULL)
+        /*
+         * Drain only violations that belong to the current session:
+         *   - backend_pid must match MyProcPid (own backend)
+         *   - ts must be >= memcheck_session_start (set by memcheck_begin)
+         *
+         * Matched slots are zeroed from the ring atomically, so a second call
+         * to end() or flush_violations() will not see the same rows.
+         *
+         * Contrast with flush_violations(), which drains the entire ring across
+         * all backends and inserts rows into ext_memcheck.violation_log.
+         */
+        if (memcheck_session_start != DT_NOBEGIN)
         {
-            for (i = 0; i < MEMCHECK_MAX_VIOLATIONS; i++)
+            entries = violation_log_read_session(MyProcPid, memcheck_session_start, &n_entries);
+            if (entries != NULL)
             {
-                ViolationEntry *e = &entries[i];
+                for (i = 0; i < n_entries; i++)
+                {
+                    ViolationEntry *e = &entries[i];
 
-                /* Skip slots that have never been written (check_type is empty). */
-                if (e->check_type[0] == '\0')
-                    continue;
+                    values[0] = CStringGetTextDatum(e->check_type);
+                    values[1] = CStringGetTextDatum(e->severity);
+                    values[2] = CStringGetTextDatum(e->detail);
+                    values[3] = TimestampTzGetDatum(e->ts);
+                    values[4] = CStringGetTextDatum(e->source_lib);
 
-                values[0] = CStringGetTextDatum(e->check_type);
-                values[1] = CStringGetTextDatum(e->severity);
-                values[2] = CStringGetTextDatum(e->detail);
-                values[3] = TimestampTzGetDatum(e->ts);
-                values[4] = CStringGetTextDatum(e->source_lib);
-
-                tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+                    tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+                }
+                pfree(entries);
             }
         }
+
+        /* Reset so a subsequent end() without begin() returns nothing. */
+        memcheck_session_start = DT_NOBEGIN;
 
         MemoryContextSwitchTo(oldcontext);
     }

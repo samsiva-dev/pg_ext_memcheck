@@ -26,8 +26,9 @@ SELECT * FROM ext_memcheck.violation_log;
 **Returns:** `int` — number of violations flushed to the table.
 
 **Notes:**
-- The ring buffer is bounded by `MEMCHECK_MAX_VIOLATIONS` set to constant `256` (not configurable). When full, oldest entries are overwritten. Call `flush_violations()` regularly to avoid data loss.
+- The ring buffer is bounded by `MEMCHECK_MAX_VIOLATIONS` (constant `2048`, not configurable). When full, oldest entries are overwritten. Call `flush_violations()` regularly to avoid data loss.
 - Returns zero if no violations have been detected since the last flush.
+- `flush_violations()` drains the **entire** ring across all backends; `end()` drains only the current session's entries. Entries consumed by one function are not visible to the other.
 
 ### Violation log table schema
 
@@ -78,17 +79,23 @@ SELECT * FROM ext_memcheck.end();
 
 ## ext_memcheck.end()
 
-Closes the current manual test window by setting `pg_ext_memcheck.memcheck_mode` to `'none'` and returns any violations detected during the window directly as a result set. 
-
-But do not flush the ring buffer into the `violation_log` table — violations remain there until you call `ext_memcheck.flush_violations()`. This allows you to inspect the violations in more detail or join them with other tables before flushing.
+Closes the current manual test window by setting `pg_ext_memcheck.memcheck_mode` to `'none'` and returns violations belonging to the current session as a result set.
 
 ```sql
 SELECT * FROM ext_memcheck.end();
 ```
 
-**Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT)` — all violations detected during the test window.
+**Returns:** `TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT)` — violations detected during this session window.
 
-Call `SELECT ext_memcheck.flush_violations()` afterwards to also persist any ring-buffer entries to the `violation_log` table.
+**Session-scoped drain semantics:**
+- Only entries where `backend_pid` matches the calling backend **and** `ts >= begin()` call time are returned.
+- Matched slots are zeroed from the ring buffer atomically, so a second call to `end()` returns 0 rows (non-repeatable read).
+- Violations from other concurrent backends are not affected.
+- The ring buffer is **not** flushed to `violation_log`; those entries remain available to `flush_violations()` unless they were already drained by `end()`.
+
+<Aside type="note">
+This is different from `flush_violations()`, which drains the **entire** ring across all backends and inserts every entry into `ext_memcheck.violation_log`. Use `end()` for in-session ad-hoc inspection; use `flush_violations()` for persistent cross-session records.
+</Aside>
 
 ---
 
