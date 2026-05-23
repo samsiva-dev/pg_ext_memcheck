@@ -731,7 +731,7 @@ shmem_probe_register(PG_FUNCTION_ARGS)
 
     probe_register(name_str, size_bytes, size_bytes); /* sentinel at the end of the segment */
     elog(INFO, "Registered shmem probe '%s' with size %zu bytes", name_str, size_bytes);
-    PG_RETURN_VOID();
+    PG_RETURN_TEXT_P(cstring_to_text("Registered shmem probe."));
 }
 
 PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);

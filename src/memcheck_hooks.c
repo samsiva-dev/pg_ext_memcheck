@@ -408,6 +408,14 @@ void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
     {
         MemoryContext old_ctx;
 
+        /* Free any stale snapshot left by a previous query that errored between
+         * ExecutorStart and ExecutorEnd (the end hook never ran to clean up). */
+        if (before_snapshot != NULL)
+        {
+            free_context_tree(before_snapshot);
+            before_snapshot = NULL;
+        }
+
         resolve_active_hook_libs();
         old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
         before_snapshot = snapshot_context_tree(TopMemoryContext);
@@ -476,8 +484,20 @@ PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string, int c
     // So we take a before-snapshot at the start of the planner hook, 
     // and the after-snapshot and diff analysis will be done in the ExecutorEnd hook.
     // Means ALL = PLANNER + EXECUTOR, while EXECUTOR = only Executor hooks.
-    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query && before_snapshot == NULL) {
+    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query) {
         MemoryContext old_ctx;
+
+        /* Free any stale snapshot left by a previous query that errored between
+         * planner_hook and ExecutorEnd (the end hook never ran to clean up).
+         * The before_snapshot == NULL guard was removed: reusing a stale snapshot
+         * produces a bogus diff for the next query, which is worse than the
+         * existing documented limitation that nested-query outer analysis is
+         * skipped when the inner ExecutorEnd clears the pointer. */
+        if (before_snapshot != NULL)
+        {
+            free_context_tree(before_snapshot);
+            before_snapshot = NULL;
+        }
 
         resolve_active_hook_libs();
         old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
