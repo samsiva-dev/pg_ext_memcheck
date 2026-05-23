@@ -282,7 +282,7 @@ typedef struct CtxSnapshot {
     Size   totalAllocated;
     Size   totalFree;
     int    depth;           /* depth in tree */
-    Oid    parentHash;      /* hash of parent name+depth for diff */
+    uint32 parentHash;      /* hash of parent name+depth for diff */
 } CtxSnapshot;
 
 typedef struct CtxTree {

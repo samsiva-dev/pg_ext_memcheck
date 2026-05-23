@@ -119,15 +119,18 @@ snapshot_context_tree(MemoryContext root)
 /*
     Function: diff_context_trees
     Description: Compares two CtxTree snapshots and returns an array of CtxDiff structures
-                 representing contexts present in both snapshots.  Only matched contexts are
-                 included; *diff_count is set to the number of valid entries returned.
-                 Returns NULL (with *diff_count = 0) when nothing matched.
+                 representing every context present in the after-snapshot.  Contexts that also
+                 appear in the before-snapshot are paired (their before* fields reflect the
+                 earlier measurement); contexts that are new (not in before) have their before*
+                 fields set to 0 so their full allocation is visible to the caller.
+                 *diff_count is set to the total number of entries returned (matched + new).
+                 Returns NULL (with *diff_count = 0) when after is empty.
     Parameters:
         - CtxTree *before:    snapshot before the operation.
         - CtxTree *after:     snapshot after the operation.
         - int     *diff_count: out-parameter; set to the number of entries in the returned array.
     Returns:
-        - CtxDiff*: palloc'd array of diff entries, or NULL if there were no matches.
+        - CtxDiff*: palloc'd array of diff entries, or NULL if after contained no entries.
 */
 CtxDiff *
 diff_context_trees(CtxTree *before, CtxTree *after, int *diff_count)
