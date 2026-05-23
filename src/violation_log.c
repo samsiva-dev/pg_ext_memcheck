@@ -32,6 +32,8 @@
 
 #define VIOLATION_LOG_SIZE MEMCHECK_MAX_VIOLATIONS
 
+int violation_log_tranche_id = 0; // Tranche ID for the violation log LWLock, initialized in shmem_startup_hook
+
 // Logs a violation to the shared ViolationLog with the given details. Thread-safe via LWLock.
 void
 violation_log_write(const char *check_type, const char *severity, const char *detail, const char *source_lib)
@@ -110,6 +112,59 @@ violation_log_read_all()
 }
 
 /*
+ * violation_log_read_session -- drain entries for a specific session.
+ *
+ * Returns entries where backend_pid == pid AND ts >= since.  Each matched slot
+ * is zeroed from the ring buffer atomically so that a second call (or a
+ * concurrent flush_violations()) never returns the same rows.
+ *
+ * Returns a palloc'd array; *out_count receives the number of entries.
+ * Caller is responsible for pfree'ing the returned array.
+ */
+ViolationEntry *
+violation_log_read_session(int pid, TimestampTz since, int *out_count)
+{
+    ViolationEntry *result;
+    int             n = 0;
+    int             i;
+
+    *out_count = 0;
+
+    if (violation_log == NULL)
+    {
+        elog(WARNING, "Violation log not initialized; cannot read violations");
+        return NULL;
+    }
+
+    result = (ViolationEntry *) palloc(sizeof(ViolationEntry) * VIOLATION_LOG_SIZE);
+
+    /* Exclusive lock: we read and zero matched slots in one critical section. */
+    LWLockAcquire(&violation_log->lock, LW_EXCLUSIVE);
+
+    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+    {
+        ViolationEntry *e = &violation_log->entries[i];
+
+        if (e->check_type[0] == '\0')
+            continue;                       /* empty slot */
+        if (e->backend_pid != pid || e->ts < since)
+            continue;                       /* different session */
+
+        result[n++] = *e;
+
+        /* Zero the slot so flush_violations() and future end() calls skip it. */
+        memset(e, 0, sizeof(ViolationEntry));
+        if (violation_log->count > 0)
+            violation_log->count--;
+    }
+
+    LWLockRelease(&violation_log->lock);
+
+    *out_count = n;
+    return result;
+}
+
+/*
  * violation_log_flush -- SQL-callable function.
  *
  * Reads all entries from the shared-memory ring buffer and inserts each
@@ -133,45 +188,55 @@ violation_log_flush(PG_FUNCTION_ARGS)
     /* Suppress executor hook monitoring for our own SPI queries. */
     memcheck_in_internal_query = true;
 
-    if (SPI_connect() != SPI_OK_CONNECT)
+    PG_TRY();
     {
+        if (SPI_connect() != SPI_OK_CONNECT)
+        {
+            elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+        }
+
+        for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+        {
+            Oid             argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
+            Datum           values[6];
+            char            nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
+            ViolationEntry *e           = &entries[i];
+    
+            /* Skip slots that have never been written (check_type is empty). */
+            if (e->check_type[0] == '\0')
+                continue;
+            values[0] = TimestampTzGetDatum(e->ts);
+            values[1] = Int32GetDatum(e->backend_pid);
+            values[2] = CStringGetTextDatum(e->check_type);
+            values[3] = CStringGetTextDatum(e->severity);
+            values[4] = CStringGetTextDatum(e->detail);
+            values[5] = CStringGetTextDatum(e->source_lib);
+    
+            ret = SPI_execute_with_args(
+                "INSERT INTO ext_memcheck.violation_log "
+                "    (ts, backend_pid, check_type, severity, detail, source_lib) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                6, argtypes, values, nulls, false, 0);
+    
+            if (ret != SPI_OK_INSERT)
+                elog(ERROR, "pg_ext_memcheck: INSERT failed (SPI error %d)", ret);
+    
+            inserted++;
+        }
+        SPI_finish();
         memcheck_in_internal_query = false;
-        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
     }
-
-    for (i = 0; i < VIOLATION_LOG_SIZE; i++)
+    PG_CATCH();
     {
-        Oid             argtypes[6] = { TIMESTAMPTZOID, INT4OID, TEXTOID, TEXTOID, TEXTOID, TEXTOID };
-        Datum           values[6];
-        char            nulls[6]    = { ' ', ' ', ' ', ' ', ' ', ' ' };
-        ViolationEntry *e           = &entries[i];
-
-        /* Skip slots that have never been written (check_type is empty). */
-        if (e->check_type[0] == '\0')
-            continue;
-        values[0] = TimestampTzGetDatum(e->ts);
-        values[1] = Int32GetDatum(e->backend_pid);
-        values[2] = CStringGetTextDatum(e->check_type);
-        values[3] = CStringGetTextDatum(e->severity);
-        values[4] = CStringGetTextDatum(e->detail);
-        values[5] = CStringGetTextDatum(e->source_lib);
-
-        ret = SPI_execute_with_args(
-            "INSERT INTO ext_memcheck.violation_log "
-            "    (ts, backend_pid, check_type, severity, detail, source_lib) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
-            6, argtypes, values, nulls, false, 0);
-
-        if (ret != SPI_OK_INSERT)
-            elog(ERROR, "pg_ext_memcheck: INSERT failed (SPI error %d)", ret);
-
-        inserted++;
+        SPI_finish();
+        memcheck_in_internal_query = false;
+        PG_RE_THROW();
     }
+    PG_END_TRY();
 
-    SPI_finish();
-    memcheck_in_internal_query = false;
+    // Free the entries array allocated by violation_log_read_all
     pfree(entries);
-
+    
     /* Clear the shared-memory ring buffer after a successful flush. */
     LWLockAcquire(&violation_log->lock, LW_EXCLUSIVE);
     memset(violation_log->entries, 0, sizeof(violation_log->entries));

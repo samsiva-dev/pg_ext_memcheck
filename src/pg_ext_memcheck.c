@@ -36,7 +36,14 @@
 #include "include/shmem_probe.h"
 
 void _PG_init(void);
-void _PG_fini(void);
+
+/*
+ * NOTE: _PG_fini is intentionally absent.  PostgreSQL never unloads
+ * shared_preload_libraries modules, so an unload callback would be dead
+ * code.  The on_proc_exit callback registered in _PG_init cannot be
+ * deregistered; it runs harmlessly at backend exit for the lifetime of
+ * the backend.
+ */
 
 PG_MODULE_MAGIC;
 
@@ -47,10 +54,9 @@ static shmem_request_hook_type prev_shmem_request_hook = NULL;
 static void memcheck_shmem_request(void); // Forward declaration of shared memory request hook
 static void memcheck_shmem_startup(void); // Forward declaration of shared memory startup hook
 
-// Hook installation and uninstallation functions
+// Hook installation function
 
 static void install_hooks(void);
-static void uninstall_hooks(void);
 
 ViolationLog *violation_log = NULL; // Global pointer to the shared violation log
 DsmTrackerState *dsm_tracker_state = NULL; // Global pointer to the shared DSM tracker state
@@ -85,18 +91,6 @@ _PG_init(void)
     on_proc_exit(memcheck_proc_exit_dsm_check, (Datum) 0);
 }
 
-// Extension unload callback
-void
-_PG_fini(void)
-{
-    elog(INFO, "pg_ext_memcheck unloaded");
-
-    // Uninstall hooks
-    uninstall_hooks();
-    uninstall_executor_hooks();
-    uninstall_planner_hook();
-}
-
 /*
     Hook installation function
     Installs hooks for planner, executor, logging, and shared memory startup. 
@@ -112,18 +106,6 @@ install_hooks(void)
 
     prev_shmem_startup_hook = shmem_startup_hook;
     shmem_startup_hook = memcheck_shmem_startup;
-}
-
-/*
-    Hook uninstallation function
-    Restores previous hooks to ensure clean unload of the extension.
-*/
-static void
-uninstall_hooks(void)
-{
-    // Restore previous hooks
-    shmem_request_hook = prev_shmem_request_hook;
-    shmem_startup_hook = prev_shmem_startup_hook;
 }
 
 static void
@@ -147,6 +129,11 @@ static void memcheck_shmem_startup(void)
      * LWLockNewTrancheId() accesses a shared-memory counter that does
      * not exist until after CreateSharedMemoryAndSemaphores() runs.
      */
+    if (violation_log_tranche_id == 0) 
+    {
+        violation_log_tranche_id = LWLockNewTrancheId();
+        LWLockRegisterTranche(violation_log_tranche_id, "pg_ext_memcheck_violation_log");
+    }
     if (dsm_tracker_tranche_id == 0)
     {
         dsm_tracker_tranche_id = LWLockNewTrancheId();
@@ -164,6 +151,7 @@ static void memcheck_shmem_startup(void)
     if (!found)    {
         // First time initialization, zero out the log
         memset(violation_log, 0, sizeof(ViolationLog));
+        LWLockInitialize(&violation_log->lock, violation_log_tranche_id);
     }
 
     // Allocate shared memory for the DSM tracker state

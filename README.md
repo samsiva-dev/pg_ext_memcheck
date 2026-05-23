@@ -73,10 +73,11 @@ SELECT ext_memcheck.begin('executor');
 -- Call the function you want to inspect
 SELECT your_extension.some_function('input');
 
--- End the window; returns violations detected during this window
+-- End the window; returns only violations from this session (current pid + ts >= begin time)
+-- Consumed slots are cleared from the ring — a second call returns 0 rows
 SELECT * FROM ext_memcheck.end();
 
--- Flush ring-buffer entries to the persistent log table
+-- Flush any remaining ring-buffer entries (other backends, etc.) to the persistent log table
 SELECT ext_memcheck.flush_violations();
 
 -- Query the violation log for details
@@ -173,17 +174,18 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 
 | Function | Returns | Description |
 |---|---|---|
-| `ext_memcheck.begin(target_mode TEXT)` | `text` | Opens a test window and sets `memcheck_mode`. |
-| `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts, source_lib)` | Closes the window and returns violations detected. Does not flush to `violation_log`. |
-| `ext_memcheck.flush_violations()` | `int` | Drains the ring buffer into `violation_log`; returns count flushed. |
+| `ext_memcheck.begin(target_mode TEXT)` | `text` | Opens a test window, sets `memcheck_mode`, and records the session start timestamp. |
+| `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts, source_lib)` | Closes the window and returns violations scoped to this session (current `backend_pid` + `ts >= begin()` time). Matched slots are cleared from the ring atomically — repeated calls return 0 rows. Does not flush to `violation_log`. |
+| `ext_memcheck.flush_violations()` | `int` | Drains the **entire** ring buffer across all backends into `violation_log`; returns count flushed. Clears all ring slots. |
 | `ext_memcheck.run_scenario(scenario_name TEXT, iterations INT, workload TEXT)` | `text` | Runs a named stress scenario with a custom workload query. |
 | `ext_memcheck.clear_violations()` | `void` | Clears all rows from the `violation_log` table (does not affect ring buffer). |
 | `ext_memcheck.track_dsm_handle(handle BIGINT)` | `text` | Registers a DSM handle for lifecycle tracking. |
 | `ext_memcheck.dsm_tracking()` | `TABLE(segid, backend_pid, attach_at, size_bytes, detached)` | Returns all currently tracked DSM segments. |
 | `ext_memcheck.clear_dsm_tracking()` | `void` | Resets the DSM tracking table between test runs. |
+| `ext_memcheck.register_shmem_probe(seg_name TEXT, allocated_size BIGINT)` | `text` | Registers a shared memory segment for sentinel probing. `allocated_size` must match the exact size used in `ShmemInitStruct`. |
 | `ext_memcheck.clear_shmem_registry()` | `void` | Resets the shmem sentinel probe registry between test runs. |
 
-The ring buffer is capped at 256 entries (oldest-first eviction when full). Call `flush_violations()` regularly to avoid data loss.
+The ring buffer is capped at 2048 entries (oldest-first eviction when full). Call `flush_violations()` regularly to avoid data loss.
 
 ---
 
@@ -247,7 +249,7 @@ pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_librar
 |---|---|
 | `memcheck_hooks.c` | Registers `ExecutorStart`, `ExecutorEnd`, and `planner_hook`; brackets every query with pre/post snapshots |
 | `context_walker.c` | Walks the `MemoryContext` tree; produces snapshots and diffs them to find leaks and bloat |
-| `violation_log.c` | Manages the 256-entry shared ring buffer (LWLock-protected); exposed via `flush_violations()` |
+| `violation_log.c` | Manages the 2048-entry shared ring buffer (LWLock-protected); `end()` drains per-session, `flush_violations()` drains all-backends |
 | `shmem_probe.c` | Plants `0xDE` sentinel bytes past shmem boundaries; detects overruns post-workload |
 | `dsm_tracker.c` | Records DSM attach/detach events; flags unreleased handles at window close |
 | `gucs.c` | Defines all `pg_ext_memcheck.*` GUC parameters |

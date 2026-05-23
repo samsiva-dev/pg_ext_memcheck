@@ -51,6 +51,18 @@ static planner_hook_type prev_planner_hook = NULL;
 static ExecutorStart_hook_type prev_executor_start_hook = NULL;
 static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
 
+/*
+ * Fixed memory context for before_snapshot allocations.
+ *
+ * Created under TopMemoryContext so it outlives any individual query.
+ * We switch into this context before calling snapshot_context_tree() for the
+ * before-snapshot so that the palloc'd CtxTree and its entries are always in
+ * the same, deterministic, long-lived context — regardless of whether the
+ * snapshot is taken inside planner_hook (CurrentMemoryContext == MessageContext)
+ * or inside ExecutorStart_hook (CurrentMemoryContext varies).
+ */
+static MemoryContext memcheck_hooks_ctx = NULL;
+
 /* Before-snapshot for the current (non-internal) query.
  *
  * LIMITATION (nested queries): This is a single pointer, not a stack.  When a
@@ -61,6 +73,14 @@ static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
  * only reliable for leaf (non-nested) queries within a single backend.  A future
  * Phase 2 fix would replace this pointer with a stack (MemoryContext-allocated
  * list) so each nesting level preserves its own before-snapshot.
+ * 
+ * ===== Memory Context Note =====
+ * We have to take the before-snapshot in MemCheckHooksContext context under TopMemoryContext
+ * because before_snapshot will be palloc'd in various places like planner_hook, ExecutorStart_hook.
+ * And planner_hook is under MessageContext and ExecutorStart_hook is under some other context making
+ * before-snapshot's context non-deterministic if we allocate it in the hook itself.  By using a fixed context
+ * for before_snapshot, we ensure it is always allocated in a long-lived context that outlives the hooks 
+ * and the query execution.
  */
 static CtxTree *before_snapshot = NULL;
 
@@ -340,6 +360,11 @@ analyze_and_log_diff(CtxDiff *diff)
 
 // Install and Uninstall Hooks
 void install_executor_hooks(void) {
+    // Create the fixed context for before_snapshot allocations
+    memcheck_hooks_ctx = AllocSetContextCreate(TopMemoryContext,
+                                               "MemCheckHooksContext",
+                                               ALLOCSET_DEFAULT_SIZES);
+
     // Save previous hooks and install our hooks
     prev_executor_start_hook = ExecutorStart_hook;
     ExecutorStart_hook = memcheck_executor_start;
@@ -348,19 +373,9 @@ void install_executor_hooks(void) {
     ExecutorEnd_hook = memcheck_executor_end;
 }
 
-void uninstall_executor_hooks(void) {
-    // Restore previous hooks
-    ExecutorStart_hook = prev_executor_start_hook;
-    ExecutorEnd_hook = prev_executor_end_hook;
-}
-
 void install_planner_hook(void) {
     prev_planner_hook = planner_hook;
     planner_hook = memcheck_planner_hook;
-}
-
-void uninstall_planner_hook(void) {
-    planner_hook = prev_planner_hook;
 }
 
 /*
@@ -391,8 +406,20 @@ void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
     // at the start of the query execution.
     if (memcheck_mode == MEMCHECK_EXECUTOR && !memcheck_in_internal_query)
     {
+        MemoryContext old_ctx;
+
+        /* Free any stale snapshot left by a previous query that errored between
+         * ExecutorStart and ExecutorEnd (the end hook never ran to clean up). */
+        if (before_snapshot != NULL)
+        {
+            free_context_tree(before_snapshot);
+            before_snapshot = NULL;
+        }
+
         resolve_active_hook_libs();
+        old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
         before_snapshot = snapshot_context_tree(TopMemoryContext);
+        MemoryContextSwitchTo(old_ctx);
     }
 }
 
@@ -457,9 +484,25 @@ PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string, int c
     // So we take a before-snapshot at the start of the planner hook, 
     // and the after-snapshot and diff analysis will be done in the ExecutorEnd hook.
     // Means ALL = PLANNER + EXECUTOR, while EXECUTOR = only Executor hooks.
-    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query && before_snapshot == NULL) {
+    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query) {
+        MemoryContext old_ctx;
+
+        /* Free any stale snapshot left by a previous query that errored between
+         * planner_hook and ExecutorEnd (the end hook never ran to clean up).
+         * The before_snapshot == NULL guard was removed: reusing a stale snapshot
+         * produces a bogus diff for the next query, which is worse than the
+         * existing documented limitation that nested-query outer analysis is
+         * skipped when the inner ExecutorEnd clears the pointer. */
+        if (before_snapshot != NULL)
+        {
+            free_context_tree(before_snapshot);
+            before_snapshot = NULL;
+        }
+
         resolve_active_hook_libs();
+        old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
         before_snapshot = snapshot_context_tree(TopMemoryContext);
+        MemoryContextSwitchTo(old_ctx);
     }
 
     if (prev_planner_hook)

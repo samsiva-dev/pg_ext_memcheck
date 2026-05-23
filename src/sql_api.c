@@ -63,6 +63,15 @@ static Size ctx_used_bytes(const CtxSnapshot *s);
 static int build_checkpoints(int iterations, int *ckpts);
 static void record_checkpoint(BloatSeries **series, int *count, int *cap,
                 int ckpt_idx, MemoryContext bench_ctx);
+
+/*
+ * memcheck_session_start -- backend-local timestamp set by memcheck_begin().
+ *
+ * Used by memcheck_end() to drain only violations that belong to the current
+ * session (backend_pid == MyProcPid AND ts >= memcheck_session_start).
+ * DT_NOBEGIN means no session is active.
+ */
+static TimestampTz memcheck_session_start = DT_NOBEGIN;
 static void analyze_bloat(BloatSeries *series, int count, const int *ckpts);
 
 /* Helper function to calculate used bytes from a context snapshot. */
@@ -233,6 +242,9 @@ memcheck_begin(PG_FUNCTION_ARGS)
     else
         memcheck_mode = MEMCHECK_ALL; // Default to ALL if unrecognized
 
+    /* Record the session start time for scoped draining in memcheck_end(). */
+    memcheck_session_start = GetCurrentTimestamp();
+
      elog(INFO, "Memory check session started with mode: %s", mode_str);
 
      PG_RETURN_TEXT_P(cstring_to_text("Memory check session started."));
@@ -254,6 +266,7 @@ memcheck_end(PG_FUNCTION_ARGS)
     TupleDesc        tupdesc;
     Tuplestorestate *tupstore;
     ViolationEntry  *entries;
+    int              n_entries = 0;
     int              i;
 
     memcheck_mode = MEMCHECK_NONE;
@@ -292,26 +305,40 @@ memcheck_end(PG_FUNCTION_ARGS)
         rsinfo->setResult = tupstore;
         rsinfo->setDesc = tupdesc;
 
-        entries = violation_log_read_all();
-        if (entries != NULL)
+        /*
+         * Drain only violations that belong to the current session:
+         *   - backend_pid must match MyProcPid (own backend)
+         *   - ts must be >= memcheck_session_start (set by memcheck_begin)
+         *
+         * Matched slots are zeroed from the ring atomically, so a second call
+         * to end() or flush_violations() will not see the same rows.
+         *
+         * Contrast with flush_violations(), which drains the entire ring across
+         * all backends and inserts rows into ext_memcheck.violation_log.
+         */
+        if (memcheck_session_start != DT_NOBEGIN)
         {
-            for (i = 0; i < MEMCHECK_MAX_VIOLATIONS; i++)
+            entries = violation_log_read_session(MyProcPid, memcheck_session_start, &n_entries);
+            if (entries != NULL)
             {
-                ViolationEntry *e = &entries[i];
+                for (i = 0; i < n_entries; i++)
+                {
+                    ViolationEntry *e = &entries[i];
 
-                /* Skip slots that have never been written (check_type is empty). */
-                if (e->check_type[0] == '\0')
-                    continue;
+                    values[0] = CStringGetTextDatum(e->check_type);
+                    values[1] = CStringGetTextDatum(e->severity);
+                    values[2] = CStringGetTextDatum(e->detail);
+                    values[3] = TimestampTzGetDatum(e->ts);
+                    values[4] = CStringGetTextDatum(e->source_lib);
 
-                values[0] = CStringGetTextDatum(e->check_type);
-                values[1] = CStringGetTextDatum(e->severity);
-                values[2] = CStringGetTextDatum(e->detail);
-                values[3] = TimestampTzGetDatum(e->ts);
-                values[4] = CStringGetTextDatum(e->source_lib);
-
-                tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+                    tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+                }
+                pfree(entries);
             }
         }
+
+        /* Reset so a subsequent end() without begin() returns nothing. */
+        memcheck_session_start = DT_NOBEGIN;
 
         MemoryContextSwitchTo(oldcontext);
     }
@@ -333,9 +360,9 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 {
     text    *scenario_text = PG_GETARG_TEXT_PP(0);
     char    *scenario_str  = text_to_cstring(scenario_text);
-    int      iterations    = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100;
-    text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
-    char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
+    int      iterations    = PG_GETARG_INT32(1);
+    text    *workload_text = PG_GETARG_TEXT_PP(2);
+    char    *workload_str  = text_to_cstring(workload_text);
     CtxTree *before_snapshot_tree = NULL;
     CtxTree *after_snapshot_tree;
     CtxDiff *diffs;
@@ -372,18 +399,27 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 
     memcheck_in_internal_query = true;
 
-    if (strcmp(scenario_str, "growth_benchmark") == 0) {
-        run_growth_benchmark(iterations, workload_str);
-    } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
-        run_tx_abort_loop(iterations, workload_str);
-    } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
-        run_shmem_sentinel_probe(iterations, workload_str);
-    } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
-        run_wrong_context_probe(iterations, workload_str);
-    } else {
+    PG_TRY(); 
+    {
+        if (strcmp(scenario_str, "growth_benchmark") == 0) {
+            run_growth_benchmark(iterations, workload_str);
+        } else if (strcmp(scenario_str, "tx_abort_loop") == 0) {
+            run_tx_abort_loop(iterations, workload_str);
+        } else if (strcmp(scenario_str, "shmem_sentinel_probe") == 0) {
+            run_shmem_sentinel_probe(iterations, workload_str);
+        } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
+            run_wrong_context_probe(iterations, workload_str);
+        } else {
+            memcheck_in_internal_query = false;
+            elog(ERROR, "Unknown scenario: %s", scenario_str);
+        }
+    } 
+    PG_CATCH();
+    {
         memcheck_in_internal_query = false;
-        elog(ERROR, "Unknown scenario: %s", scenario_str);
+        PG_RE_THROW();
     }
+    PG_END_TRY();
 
     memcheck_in_internal_query = false;
 
@@ -411,30 +447,20 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
     int i;
 
     if (iterations <= 0)
-    {
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
     /* Register sentinels for our own shmem segments (allocated with +1 byte). */
-    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog));
-    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState));
+    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog) + 1, sizeof(ViolationLog)); /* sentinel at the end of the struct */
+    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState) + 1, sizeof(DsmTrackerState)); /* sentinel at the end of the struct */
 
     if (SPI_connect() != SPI_OK_CONNECT)
-    {
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++)
     {
         int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT)
-        {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_finish();
@@ -452,10 +478,8 @@ run_growth_benchmark(int iterations, const char *workload)
     BloatSeries   *series = NULL;
     int            series_count = 0, series_cap = 64;
 
-    if (iterations <= 0) { 
-        elog(ERROR, "Iterations must be a positive integer"); 
-        return; 
-    }
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
 
     nckpt     = build_checkpoints(iterations, ckpts);
     bench_ctx = AllocSetContextCreate(TopMemoryContext, "pg_ext_memcheck bench",
@@ -464,7 +488,6 @@ run_growth_benchmark(int iterations, const char *workload)
     if (SPI_connect() != SPI_OK_CONNECT) {
         MemoryContextDelete(bench_ctx);
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
     }
 
     old = MemoryContextSwitchTo(bench_ctx);
@@ -478,7 +501,6 @@ run_growth_benchmark(int iterations, const char *workload)
             SPI_finish();
             MemoryContextDelete(bench_ctx);
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            return;
         }
         if (ckpt_idx < nckpt && i == ckpts[ckpt_idx]) {   /* snapshot between statements */
             record_checkpoint(&series, &series_count, &series_cap, ckpt_idx, bench_ctx);
@@ -494,37 +516,24 @@ run_growth_benchmark(int iterations, const char *workload)
 static void
 run_tx_abort_loop(int iterations, const char *workload) {
     int i;
-    if (iterations <= 0) {
+    if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
-    if (SPI_connect() != SPI_OK_CONNECT) {
+    if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++) {
         int ret = SPI_execute("SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY) {
+        if (ret != SPI_OK_UTILITY)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
 
         ret = SPI_execute(workload, true, 0);
-        if (ret != SPI_OK_SELECT) {
+        if (ret != SPI_OK_SELECT)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
 
         ret = SPI_execute("ROLLBACK TO SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY) {
+        if (ret != SPI_OK_UTILITY)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_execute("RELEASE SAVEPOINT _memcheck_sp", false, 0); // Clean up savepoint after loop
@@ -537,23 +546,16 @@ run_wrong_context_probe(int iterations, const char *workload)
 {
     int i;
 
-    if (iterations <= 0) {
+    if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
-    if (SPI_connect() != SPI_OK_CONNECT) {
+    if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++) {
         int ret = SPI_execute(workload, true, 0);
-        if (ret != SPI_OK_SELECT) {
+        if (ret != SPI_OK_SELECT)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_finish();
@@ -669,19 +671,25 @@ PG_FUNCTION_INFO_V1(dsm_tracker_handle);
 Datum
 dsm_tracker_handle(PG_FUNCTION_ARGS)
 {
-    dsm_handle   handle   = PG_GETARG_INT64(0);
+    int64        handle_arg = PG_GETARG_INT64(0);
+    dsm_handle   handle;
     dsm_segment *seg;
     Size         seg_size;
+
+    if (handle_arg < 0 || handle_arg > (int64) UINT32_MAX)
+        ereport(ERROR,
+                (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                 errmsg("handle %lld is out of range for a DSM handle (0..%u)",
+                        (long long) handle_arg, UINT32_MAX)));
+
+    handle = (dsm_handle) handle_arg;
 
     if (dsm_tracker_state == NULL)
         PG_RETURN_NULL();
 
     seg = dsm_attach(handle);
     if (seg == NULL)
-    {
         elog(ERROR, "Failed to attach to DSM segment with handle %u", handle);
-        PG_RETURN_NULL();
-    }
 
     seg_size = dsm_segment_map_length(seg);
 
@@ -699,18 +707,6 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text("DSM segment tracked."));
 }
 
-PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
-Datum
-shmem_probe_clear_registry(PG_FUNCTION_ARGS)
-{
-    if (probe_registry == NULL)
-        PG_RETURN_VOID();
-
-    probe_registry_clear();
-    elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
-    PG_RETURN_VOID();
-}
-
 PG_FUNCTION_INFO_V1(clear_dsm_tracking);
 Datum
 clear_dsm_tracking(PG_FUNCTION_ARGS)
@@ -722,5 +718,30 @@ clear_dsm_tracking(PG_FUNCTION_ARGS)
     dsm_tracker_state->count = 0; 
     LWLockRelease(&dsm_tracker_state->lock);    
     elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
+    PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(shmem_probe_register);
+Datum 
+shmem_probe_register(PG_FUNCTION_ARGS)
+{
+    text *name_text = PG_GETARG_TEXT_PP(0);
+    char *name_str  = text_to_cstring(name_text);
+    Size size_bytes = (Size) PG_GETARG_INT64(1);
+
+    probe_register(name_str, size_bytes, size_bytes); /* sentinel at the end of the segment */
+    elog(INFO, "Registered shmem probe '%s' with size %zu bytes", name_str, size_bytes);
+    PG_RETURN_TEXT_P(cstring_to_text("Registered shmem probe."));
+}
+
+PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
+Datum
+shmem_probe_clear_registry(PG_FUNCTION_ARGS)
+{
+    if (probe_registry == NULL)
+        PG_RETURN_VOID();
+
+    probe_registry_clear();
+    elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
     PG_RETURN_VOID();
 }

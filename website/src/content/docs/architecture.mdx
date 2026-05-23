@@ -97,7 +97,13 @@ Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable`
 
 ### shmem_probe.c *(Phase 2)*
 
-Intercepts `ShmemAlloc()` calls and allocates an extra guard region of 16 bytes after each tracked allocation. Fills the guard with a known sentinel pattern (`0xDEADC0DE...`). At the close of each test window, re-reads the sentinel and logs `shmem_overrun` violations where the pattern has changed.
+Maintains a `ProbeRegistry` in shared memory (up to 16 entries). `probe_register(seg_name, alloc_size, data_end)` looks up an existing `ShmemInitStruct` allocation by its exact size and writes a sentinel byte (`0xDE`) at `base_ptr[data_end]`. After a workload runs, `probe_check_all()` re-reads each sentinel and logs `shmem_overrun` violations where the byte has changed.
+
+Two sentinel placement strategies are used:
+- **Own segments** (allocated with `+1` byte in `_PG_init`): `data_end = sizeof(struct)` — the sentinel occupies the reserved guard byte.
+- **External segments** (no extra allocation): `data_end = alloc_size` — the sentinel uses the alignment slack guaranteed by `CACHELINEALIGN(alloc_size)`.
+
+Users can register their own extension's segments via the SQL function `ext_memcheck.register_shmem_probe(seg_name, allocated_size)`.
 
 ---
 

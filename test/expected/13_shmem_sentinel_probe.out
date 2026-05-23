@@ -1,6 +1,8 @@
 -- 13_shmem_sentinel_probe.sql
 -- Verify shmem_sentinel_probe scenario runs without error,
 -- appears in the scenarios view, and logs no shmem_overrun violations.
+-- Also exercises the register_shmem_probe() SQL wrapper directly so that
+-- a RETURNS TEXT / PG_RETURN_VOID mismatch (SIGSEGV) is caught here.
 SET client_min_messages = WARNING;
 SELECT ext_memcheck.flush_violations() >= 0 AS flushed;
  flushed 
@@ -9,6 +11,25 @@ SELECT ext_memcheck.flush_violations() >= 0 AS flushed;
 (1 row)
 
 DELETE FROM ext_memcheck.violation_log;
+-- Direct SQL wrapper call: must return a non-null TEXT confirmation message.
+-- If the C function incorrectly returns VOID (Datum 0) the detoast of the
+-- null pointer triggers SIGSEGV; this test catches that at the SQL level.
+SELECT ext_memcheck.register_shmem_probe('test_sentinel', 4096) IS NOT NULL AS probe_registered;
+WARNING:  pg_ext_memcheck: 'test_sentinel' has no slack for a sentinel (data_end=4096, chunk=4096); not probing
+INFO:  Registered shmem probe 'test_sentinel' with size 4096 bytes
+ probe_registered 
+------------------
+ t
+(1 row)
+
+-- Clear registry so the scenario starts clean
+SELECT ext_memcheck.clear_shmem_registry();
+INFO:  Cleared shmem probe registry in pg_ext_memcheck
+ clear_shmem_registry 
+----------------------
+ 
+(1 row)
+
 -- Scenario must run without error
 SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 5) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: shmem_sentinel_probe
