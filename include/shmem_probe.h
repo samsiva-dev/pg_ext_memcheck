@@ -19,8 +19,9 @@
 
 typedef struct ProbeRecord {
     char  seg_name[64];
-    Size  declared_size;
+    Size  alloc_size; /* exact size the owner allocated it with (for lookup) */
     bool  registered;
+    Size  data_end; /* offset where the sentinel byte is planted */
 } ProbeRecord;
 
 typedef struct ProbeRegistry {
@@ -32,7 +33,7 @@ typedef struct ProbeRegistry {
 extern ProbeRegistry *probe_registry;
 extern int shmem_probe_tranche_id;
 
-extern void probe_register(const char *seg_name, Size declared_size);
+extern void probe_register(const char *seg_name, Size alloc_size, Size data_end);
 extern bool probe_check(const char *seg_name);
 extern void probe_check_all(void);
 extern void probe_registry_clear(void);

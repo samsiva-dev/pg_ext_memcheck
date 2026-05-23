@@ -89,19 +89,30 @@ RETURNS TABLE(
 ) AS 'pg_ext_memcheck', 'dsm_tracker_list_segments'
 LANGUAGE C STRICT;
 
--- 
+-- Tracking API for DSM segments
 CREATE OR REPLACE FUNCTION ext_memcheck.track_dsm_handle(
     handle BIGINT
 ) RETURNS TEXT
 AS 'pg_ext_memcheck', 'dsm_tracker_handle'
 LANGUAGE C STRICT;
 
+-- Utility functions to clear tracking state between tests
+CREATE OR REPLACE FUNCTION ext_memcheck.clear_dsm_tracking()
+RETURNS void
+AS 'pg_ext_memcheck', 'clear_dsm_tracking'
+LANGUAGE C STRICT;
+
+-- API to register a user's extension shared memory probe callback
+CREATE OR REPLACE FUNCTION ext_memcheck.register_shmem_probe(
+    seg_name TEXT,
+    allocated_size BIGINT
+) RETURNS TEXT
+AS 'pg_ext_memcheck', 'shmem_probe_register'
+LANGUAGE C STRICT;
+
+-- Utility function to clear the shared memory registry
 CREATE OR REPLACE FUNCTION ext_memcheck.clear_shmem_registry()
 RETURNS void
 AS 'pg_ext_memcheck', 'shmem_probe_clear_registry'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION ext_memcheck.clear_dsm_tracking()
-RETURNS void
-AS 'pg_ext_memcheck', 'clear_dsm_tracking'
-LANGUAGE C STRICT;

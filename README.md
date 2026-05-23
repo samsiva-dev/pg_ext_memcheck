@@ -181,6 +181,7 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 | `ext_memcheck.track_dsm_handle(handle BIGINT)` | `text` | Registers a DSM handle for lifecycle tracking. |
 | `ext_memcheck.dsm_tracking()` | `TABLE(segid, backend_pid, attach_at, size_bytes, detached)` | Returns all currently tracked DSM segments. |
 | `ext_memcheck.clear_dsm_tracking()` | `void` | Resets the DSM tracking table between test runs. |
+| `ext_memcheck.register_shmem_probe(seg_name TEXT, allocated_size BIGINT)` | `text` | Registers a shared memory segment for sentinel probing. `allocated_size` must match the exact size used in `ShmemInitStruct`. |
 | `ext_memcheck.clear_shmem_registry()` | `void` | Resets the shmem sentinel probe registry between test runs. |
 
 The ring buffer is capped at 256 entries (oldest-first eviction when full). Call `flush_violations()` regularly to avoid data loss.

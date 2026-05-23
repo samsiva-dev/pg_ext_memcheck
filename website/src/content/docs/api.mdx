@@ -168,6 +168,41 @@ SELECT ext_memcheck.clear_dsm_tracking();
 
 ---
 
+## ext_memcheck.register_shmem_probe()
+
+Registers a shared memory segment for sentinel probing. Use this to probe your own extension's `ShmemInitStruct` allocation — pg_ext_memcheck will plant a `0xDE` sentinel byte immediately after your declared data and verify it is intact after each workload run.
+
+```sql
+SELECT ext_memcheck.register_shmem_probe('my_ext SomeStruct', 1234);
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `seg_name` | `text` | Name the segment is registered under in `ShmemIndex` — must match the first argument to `ShmemInitStruct` exactly. |
+| `allocated_size` | `bigint` | Exact size in bytes used when the segment was allocated. The sentinel is planted at `base_ptr[allocated_size]`, which must fall within the alignment slack reserved by `CACHELINEALIGN(allocated_size)`. |
+
+**Returns:** `text` — confirmation message.
+
+**Notes:**
+- The segment must already exist in `ShmemIndex` when this function is called. If it does not, a WARNING is issued and no probe is registered.
+- Call this once per test session, before running `ext_memcheck.run_scenario('shmem_sentinel_probe', ...)`.
+- pg_ext_memcheck's own segments (`ViolationLog`, `DsmTrackerState`) are registered automatically by the scenario and do not need to be registered manually.
+
+```sql
+-- Register your extension's shmem segment, then run the probe scenario
+SELECT ext_memcheck.register_shmem_probe('my_ext SomeStruct', 1234);
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT my_ext.some_function()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
+
+-- Clear the registry between test runs
+SELECT ext_memcheck.clear_shmem_registry();
+```
+
+---
+
 ## ext_memcheck.clear_shmem_registry()
 
 Resets the shmem sentinel probe registry by clearing all registered segment records. Existing sentinel bytes in shared memory are left in place; subsequent `run_scenario('shmem_sentinel_probe', ...)` calls will re-register and rewrite them.

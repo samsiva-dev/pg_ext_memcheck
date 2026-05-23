@@ -426,8 +426,8 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
     }
 
     /* Register sentinels for our own shmem segments (allocated with +1 byte). */
-    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog));
-    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState));
+    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog) + 1, sizeof(ViolationLog)); /* sentinel at the end of the struct */
+    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState) + 1, sizeof(DsmTrackerState)); /* sentinel at the end of the struct */
 
     if (SPI_connect() != SPI_OK_CONNECT)
     {
@@ -708,18 +708,6 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text("DSM segment tracked."));
 }
 
-PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
-Datum
-shmem_probe_clear_registry(PG_FUNCTION_ARGS)
-{
-    if (probe_registry == NULL)
-        PG_RETURN_VOID();
-
-    probe_registry_clear();
-    elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
-    PG_RETURN_VOID();
-}
-
 PG_FUNCTION_INFO_V1(clear_dsm_tracking);
 Datum
 clear_dsm_tracking(PG_FUNCTION_ARGS)
@@ -731,5 +719,30 @@ clear_dsm_tracking(PG_FUNCTION_ARGS)
     dsm_tracker_state->count = 0; 
     LWLockRelease(&dsm_tracker_state->lock);    
     elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
+    PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(shmem_probe_register);
+Datum 
+shmem_probe_register(PG_FUNCTION_ARGS)
+{
+    text *name_text = PG_GETARG_TEXT_PP(0);
+    char *name_str  = text_to_cstring(name_text);
+    Size size_bytes = (Size) PG_GETARG_INT64(1);
+
+    probe_register(name_str, size_bytes, size_bytes); /* sentinel at the end of the segment */
+    elog(INFO, "Registered shmem probe '%s' with size %zu bytes", name_str, size_bytes);
+    PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
+Datum
+shmem_probe_clear_registry(PG_FUNCTION_ARGS)
+{
+    if (probe_registry == NULL)
+        PG_RETURN_VOID();
+
+    probe_registry_clear();
+    elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
     PG_RETURN_VOID();
 }

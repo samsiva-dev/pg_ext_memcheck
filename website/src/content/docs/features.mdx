@@ -76,7 +76,13 @@ detail:         "context 'TopMemoryContext' (depth 0): allocated grew by 1024 by
 
 Extensions that use `ShmemAlloc()` are responsible for staying within their allocated bounds. Overruns corrupt adjacent shared memory structures silently — no segfault, just data corruption.
 
-**How it works:** `shmem_probe.c` maintains a `ProbeRegistry` in shared memory. For each tracked segment, `probe_register()` looks up the existing `ShmemInitStruct` allocation and writes a sentinel byte (`0xDE`) at `base_ptr[declared_size]` — a position in pg_ext_memcheck's own reserved guard space (every tracked allocation is requested with `+1` extra byte). After a workload runs, `probe_check_all()` re-reads each sentinel. A mismatch logs a `shmem_overrun` violation.
+**How it works:** `shmem_probe.c` maintains a `ProbeRegistry` in shared memory. For each tracked segment, `probe_register(seg_name, alloc_size, data_end)` looks up the existing `ShmemInitStruct` allocation by its exact size and writes a sentinel byte (`0xDE`) at `base_ptr[data_end]`. After a workload runs, `probe_check_all()` re-reads each sentinel. A mismatch logs a `shmem_overrun` violation.
+
+Two sentinel placement strategies are used:
+- **Own segments** (allocated with `+1` byte in `_PG_init`): `data_end = sizeof(struct)` — the sentinel is placed in the reserved guard byte.
+- **External segments** (no extra allocation): `data_end = alloc_size` — the sentinel uses the alignment slack guaranteed by `CACHELINEALIGN(alloc_size)`.
+
+To probe your own extension's shared memory segment, call `ext_memcheck.register_shmem_probe(seg_name, allocated_size)` before running the scenario.
 
 ```sql
 -- Run the built-in sentinel probe scenario

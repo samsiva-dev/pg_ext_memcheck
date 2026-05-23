@@ -120,7 +120,9 @@ SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
 SELECT ext_memcheck.clear_shmem_registry();
 ```
 
-**How it works:** `shmem_probe.c` allocates a `ProbeRegistry` in shared memory. The scenario calls `probe_register()` for the `ViolationLog` and `DsmTrackerState` segments — both of which were reserved with an extra byte in `_PG_init`. After the workload loop, `probe_check_all()` reads each sentinel byte. Any value other than `0xDE` logs a `shmem_overrun` ERROR violation.
+**How it works:** `shmem_probe.c` allocates a `ProbeRegistry` in shared memory. The scenario calls `probe_register(seg_name, alloc_size, data_end)` for the `ViolationLog` and `DsmTrackerState` segments — both allocated with an extra byte in `_PG_init`, so `alloc_size = sizeof(struct) + 1` and the sentinel is placed at `data_end = sizeof(struct)`. After the workload loop, `probe_check_all()` reads each sentinel byte. Any value other than `0xDE` logs a `shmem_overrun` ERROR violation.
+
+To probe your own extension's shared memory segment, call `ext_memcheck.register_shmem_probe(seg_name, allocated_size)` before running this scenario.
 
 **What it catches:** Off-by-one writes past a segment's declared boundary; memset or memcpy calls whose length is computed incorrectly.
 
