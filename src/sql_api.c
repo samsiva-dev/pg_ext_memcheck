@@ -705,9 +705,18 @@ PG_FUNCTION_INFO_V1(dsm_tracker_handle);
 Datum
 dsm_tracker_handle(PG_FUNCTION_ARGS)
 {
-    dsm_handle   handle   = PG_GETARG_INT64(0);
+    int64        handle_arg = PG_GETARG_INT64(0);
+    dsm_handle   handle;
     dsm_segment *seg;
     Size         seg_size;
+
+    if (handle_arg < 0 || handle_arg > (int64) UINT32_MAX)
+        ereport(ERROR,
+                (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                 errmsg("handle %lld is out of range for a DSM handle (0..%u)",
+                        (long long) handle_arg, UINT32_MAX)));
+
+    handle = (dsm_handle) handle_arg;
 
     if (dsm_tracker_state == NULL)
         PG_RETURN_NULL();
