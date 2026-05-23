@@ -360,9 +360,9 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 {
     text    *scenario_text = PG_GETARG_TEXT_PP(0);
     char    *scenario_str  = text_to_cstring(scenario_text);
-    int      iterations    = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100;
-    text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
-    char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
+    int      iterations    = PG_GETARG_INT32(1);
+    text    *workload_text = PG_GETARG_TEXT_PP(2);
+    char    *workload_str  = text_to_cstring(workload_text);
     CtxTree *before_snapshot_tree = NULL;
     CtxTree *after_snapshot_tree;
     CtxDiff *diffs;
@@ -447,30 +447,20 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
     int i;
 
     if (iterations <= 0)
-    {
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
     /* Register sentinels for our own shmem segments (allocated with +1 byte). */
     probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog) + 1, sizeof(ViolationLog)); /* sentinel at the end of the struct */
     probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState) + 1, sizeof(DsmTrackerState)); /* sentinel at the end of the struct */
 
     if (SPI_connect() != SPI_OK_CONNECT)
-    {
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++)
     {
         int ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT)
-        {
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_finish();
@@ -488,10 +478,8 @@ run_growth_benchmark(int iterations, const char *workload)
     BloatSeries   *series = NULL;
     int            series_count = 0, series_cap = 64;
 
-    if (iterations <= 0) { 
-        elog(ERROR, "Iterations must be a positive integer"); 
-        return; 
-    }
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
 
     nckpt     = build_checkpoints(iterations, ckpts);
     bench_ctx = AllocSetContextCreate(TopMemoryContext, "pg_ext_memcheck bench",
@@ -500,7 +488,6 @@ run_growth_benchmark(int iterations, const char *workload)
     if (SPI_connect() != SPI_OK_CONNECT) {
         MemoryContextDelete(bench_ctx);
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
     }
 
     old = MemoryContextSwitchTo(bench_ctx);
@@ -514,7 +501,6 @@ run_growth_benchmark(int iterations, const char *workload)
             SPI_finish();
             MemoryContextDelete(bench_ctx);
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            return;
         }
         if (ckpt_idx < nckpt && i == ckpts[ckpt_idx]) {   /* snapshot between statements */
             record_checkpoint(&series, &series_count, &series_cap, ckpt_idx, bench_ctx);
@@ -530,37 +516,24 @@ run_growth_benchmark(int iterations, const char *workload)
 static void
 run_tx_abort_loop(int iterations, const char *workload) {
     int i;
-    if (iterations <= 0) {
+    if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
-    if (SPI_connect() != SPI_OK_CONNECT) {
+    if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++) {
         int ret = SPI_execute("SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY) {
+        if (ret != SPI_OK_UTILITY)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
 
         ret = SPI_execute(workload, true, 0);
-        if (ret != SPI_OK_SELECT) {
+        if (ret != SPI_OK_SELECT)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
 
         ret = SPI_execute("ROLLBACK TO SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY) {
+        if (ret != SPI_OK_UTILITY)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_execute("RELEASE SAVEPOINT _memcheck_sp", false, 0); // Clean up savepoint after loop
@@ -573,23 +546,16 @@ run_wrong_context_probe(int iterations, const char *workload)
 {
     int i;
 
-    if (iterations <= 0) {
+    if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");
-        return;
-    }
 
-    if (SPI_connect() != SPI_OK_CONNECT) {
+    if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
-        return;
-    }
 
     for (i = 0; i < iterations; i++) {
         int ret = SPI_execute(workload, true, 0);
-        if (ret != SPI_OK_SELECT) {
+        if (ret != SPI_OK_SELECT)
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
-            SPI_finish();
-            return;
-        }
     }
 
     SPI_finish();
@@ -723,10 +689,7 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
 
     seg = dsm_attach(handle);
     if (seg == NULL)
-    {
         elog(ERROR, "Failed to attach to DSM segment with handle %u", handle);
-        PG_RETURN_NULL();
-    }
 
     seg_size = dsm_segment_map_length(seg);
 
