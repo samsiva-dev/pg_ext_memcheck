@@ -18,9 +18,7 @@
 
 // Executor Hooks
 extern void install_executor_hooks(void);
-extern void uninstall_executor_hooks(void);
 extern void install_planner_hook(void);
-extern void uninstall_planner_hook(void);
 
 // Hook implementations functions
 extern void memcheck_executor_start(QueryDesc *queryDesc, int eflags);

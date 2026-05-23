@@ -373,27 +373,9 @@ void install_executor_hooks(void) {
     ExecutorEnd_hook = memcheck_executor_end;
 }
 
-void uninstall_executor_hooks(void) {
-    // Restore previous hooks
-    ExecutorStart_hook = prev_executor_start_hook;
-    ExecutorEnd_hook = prev_executor_end_hook;
-
-    // Delete the fixed context; this also frees any before_snapshot still held
-    if (memcheck_hooks_ctx != NULL)
-    {
-        MemoryContextDelete(memcheck_hooks_ctx);
-        memcheck_hooks_ctx = NULL;
-        before_snapshot = NULL; /* pointer now dangling — clear it */
-    }
-}
-
 void install_planner_hook(void) {
     prev_planner_hook = planner_hook;
     planner_hook = memcheck_planner_hook;
-}
-
-void uninstall_planner_hook(void) {
-    planner_hook = prev_planner_hook;
 }
 
 /*
