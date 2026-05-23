@@ -74,7 +74,8 @@ SELECT * FROM (
     VALUES
     ('growth_benchmark', 'Measures context size growth over N invocations'),
     ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup'),
-    ('shmem_sentinel_probe', 'Plants sentinel bytes around shmem allocations and verifies integrity after workload')
+    ('shmem_sentinel_probe', 'Plants sentinel bytes around shmem allocations and verifies integrity after workload'),
+    ('wrong_context_probe', 'Checks for allocations that land in long-lived contexts and reports violations')
 ) AS scenarios(name, description);
 
 
