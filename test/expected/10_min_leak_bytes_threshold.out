@@ -21,8 +21,8 @@ DELETE FROM ext_memcheck.violation_log;
 -- Set a huge threshold so nothing trivial is logged
 SET pg_ext_memcheck.min_leak_bytes = '1073741824';  -- 1 GiB
 SET pg_ext_memcheck.memcheck_mode = 'executor';
-SELECT ext_memcheck.begin('executor');
-INFO:  Memory check session started with mode: executor
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -46,8 +46,9 @@ INFO:  Memory check session ended.
 -- Now drop threshold to 0 so everything is logged
 RESET pg_ext_memcheck.min_leak_bytes;
 SET pg_ext_memcheck.min_leak_bytes = '0';
-SELECT ext_memcheck.begin('executor');
-INFO:  Memory check session started with mode: executor
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.

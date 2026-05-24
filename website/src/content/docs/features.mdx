@@ -14,7 +14,7 @@ PostgreSQL allocates memory through a tree of `MemoryContext` nodes. When extens
 1. `ExecutorStart` hook fires → `context_walker` walks the entire `MemoryContext` tree and records a snapshot: each context's name, parent pointer, and allocation stats.
 2. Extension code runs.
 3. `ExecutorEnd` hook fires → `context_walker` takes a second snapshot and diffs it against the first.
-4. Any context present in the post-query snapshot but absent from the pre-query snapshot is logged as a `context_leak` violation.
+4. Any context present in the post-query snapshot but absent from the pre-query snapshot is logged as a `context_leak` violation — **provided its name matches the active `ext_context_pattern`** (if set).
 
 ```c
 /* Example: buggy extension that leaks a context */
@@ -39,6 +39,15 @@ context_name:   "MyWorkCtx"
 detail:         "Context present in post-query snapshot but absent pre-query"
 ```
 
+**Scoping to your extension:** pass a SQL `LIKE` pattern to `begin()` so that only contexts whose names match are checked. This eliminates false positives from PostgreSQL core contexts:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('MyWorkCtx%');
+SELECT my_extension.some_function();
+SELECT * FROM ext_memcheck.end();
+```
+
 ---
 
 ## Wrong-context allocation detection
@@ -49,6 +58,8 @@ Allocating in `TopMemoryContext` or `CacheMemoryContext` from a query-handler is
 
 - **Pass 1 — growth in global contexts:** For every context whose name matches a known global (`TopMemoryContext`, `CacheMemoryContext`), if `totalAllocated` grew since the pre-query snapshot, a `wrong_ctx_alloc` WARNING is emitted with the delta and absolute sizes.
 - **Pass 2 — new child contexts under globals:** If a context appears in the post-query snapshot but not the pre-query snapshot, and its parent is a known global context, a `wrong_ctx_alloc` WARNING is emitted identifying the newly created child.
+
+Both passes respect the **`allowed_contexts` allowlist**: any context (or parent context) listed in the allowlist is skipped. This lets you suppress false positives for extensions that intentionally cache data in long-lived contexts across queries.
 
 ```c
 /* Example: buggy extension allocating in the wrong context */
@@ -68,6 +79,16 @@ violation_type: wrong_ctx_alloc
 severity:       WARNING
 detail:         "context 'TopMemoryContext' (depth 0): allocated grew by 1024 bytes in a
                  known global context (before=... after=...)"
+```
+
+To silence this for a context your extension uses intentionally, add it to the allowlist:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin(
+    'MyExtCtx%',
+    '{"allowed_contexts": ["TopMemoryContext"]}'
+);
 ```
 
 ---

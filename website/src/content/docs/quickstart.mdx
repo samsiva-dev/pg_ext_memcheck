@@ -59,13 +59,18 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 Test a simple function or query from/on any extension you are developing:
 
 ```sql
--- Start a check window in executor mode
-SELECT ext_memcheck.begin('executor');
+-- Set the monitoring mode (controls which execution phases are instrumented)
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+
+-- Start a check window targeted at your extension's memory contexts.
+-- The pattern uses SQL LIKE syntax; '%' is a wildcard.
+-- Pass an empty string to monitor all contexts.
+SELECT ext_memcheck.begin('MyExtCtx%');
 
 -- Call the function you want to inspect
 SELECT your_extension.some_function('input');
 
--- End the window; returns violations detected during this window
+-- End the window; returns violations for contexts matching 'MyExtCtx%'
 SELECT * FROM ext_memcheck.end();
 
 -- Also flush any remaining ring-buffer entries to the log table
@@ -77,6 +82,18 @@ SELECT * FROM ext_memcheck.violation_log ORDER BY ts DESC;
 
 If `flush_violations()` returns zero rows, no leaks or wrong-context allocations were detected for that invocation.
 
+To suppress false positives from contexts your extension intentionally uses long-term, pass an `allowed_contexts` allowlist:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin(
+    'MyExtCtx%',
+    '{"allowed_contexts": ["TopMemoryContext", "CacheMemoryContext"]}'
+);
+SELECT your_extension.some_function('input');
+SELECT * FROM ext_memcheck.end();
+```
+
 A violation row looks like this:
 
 | Column | Example |
@@ -84,8 +101,8 @@ A violation row looks like this:
 | `ts` | `2026-05-10 14:32:01 UTC` |
 | `backend_pid` | `12345` |
 | `detail` | `"Context present in post-query snapshot but not pre-query"` |
-| `severity` | `warning`, `info`, `critical`, etc. |
-| `check_type` | `context_leak`, `wrong_context_allocation`, `shmem_overrun`, etc. |
+| `severity` | `WARNING`, `INFO`, `ERROR` |
+| `check_type` | `context_leak`, `wrong_ctx_alloc`, `shmem_overrun`, etc. |
 | `source_lib` | `your_extension.dylib` |
 
 ## Run a built-in stress scenario
@@ -115,10 +132,14 @@ SELECT ext_memcheck.flush_violations();
 | `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. See [API reference](/api/#pg_ext_memcheckmemcheck_mode). |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (in bytes) is silently ignored. |
 
-For focused testing of a single function, set mode to `executor` to reduce noise:
+`memcheck_mode` controls **which phases** are hooked; the `ext_context_pattern` argument to `begin()` controls **which contexts** are reported. Set the GUC once for the session:
 
 ```sql
+-- Executor-only mode (less noise, skips planning-phase allocations)
 SET pg_ext_memcheck.memcheck_mode = 'executor';
+
+-- Full coverage: planner + executor
+SET pg_ext_memcheck.memcheck_mode = 'all';
 ```
 
 ## Regression testing

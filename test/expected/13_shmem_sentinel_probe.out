@@ -16,7 +16,6 @@ DELETE FROM ext_memcheck.violation_log;
 -- null pointer triggers SIGSEGV; this test catches that at the SQL level.
 SELECT ext_memcheck.register_shmem_probe('test_sentinel', 4096) IS NOT NULL AS probe_registered;
 WARNING:  pg_ext_memcheck: 'test_sentinel' has no slack for a sentinel (data_end=4096, chunk=4096); not probing
-INFO:  Registered shmem probe 'test_sentinel' with size 4096 bytes
  probe_registered 
 ------------------
  t

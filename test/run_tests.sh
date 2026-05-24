@@ -150,7 +150,8 @@ cd "$ROOT_DIR"
     10_min_leak_bytes_threshold \
     11_violation_log_schema \
     12_idempotent_install \
-    13_shmem_sentinel_probe
+    13_shmem_sentinel_probe \
+    14_context_pattern_filter
 
 echo ""
 echo "=== All regression tests passed ==="

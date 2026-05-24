@@ -43,8 +43,9 @@ SELECT ext_memcheck.flush_violations() >= 0 AS second_flush_ok;
 (1 row)
 
 -- end() on the cleared buffer must return 0 rows
-SELECT ext_memcheck.begin('none');
-INFO:  Memory check session started with mode: none
+SET pg_ext_memcheck.memcheck_mode = 'none';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.

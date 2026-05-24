@@ -26,7 +26,8 @@ SELECT ext_memcheck.flush_violations() >= 0 AS first_flush_ok;
 SELECT ext_memcheck.flush_violations() >= 0 AS second_flush_ok;
 
 -- end() on the cleared buffer must return 0 rows
-SELECT ext_memcheck.begin('none');
+SET pg_ext_memcheck.memcheck_mode = 'none';
+SELECT ext_memcheck.begin('');
 SELECT count(*) >= 0 AS viol_after_flush FROM ext_memcheck.end();
 
 -- Cleanup

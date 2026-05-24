@@ -13,8 +13,39 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "executor/executor.h"
+#include "pg_config_manual.h"
 
 #include "include/context_walker.h"
+
+/* Maximum number of contexts in the per-session allowlist. */
+#define MEMCHECK_MAX_ALLOWED_CTXS 16
+
+/*
+ * Session-scoped targeting state — set by ext_memcheck.begin() and cleared by
+ * ext_memcheck.end().  These are consulted by analyze_and_log_diff() and
+ * check_wrong_context_alloc() to scope detection to the target extension.
+ *
+ * ext_context_pattern  : SQL LIKE pattern (% wildcard) for context names to
+ *                        monitor.  Empty string means "monitor all contexts".
+ * ext_allowed_contexts : Allowlist of context names that are explicitly
+ *                        permitted to grow without being flagged as a violation,
+ *                        (e.g., "TopMemoryContext" for extensions that
+ *                        intentionally cache data across queries).
+ * ext_n_allowed_contexts: Number of valid entries in ext_allowed_contexts.
+ * ext_track_shmem      : Whether shmem sentinel checks are active.
+ * ext_track_dsm        : Whether DSM leak checks are active.
+ */
+extern char ext_context_pattern[NAMEDATALEN];
+extern char ext_allowed_contexts[MEMCHECK_MAX_ALLOWED_CTXS][NAMEDATALEN];
+extern int  ext_n_allowed_contexts;
+extern bool ext_track_shmem;
+extern bool ext_track_dsm;
+
+/* Returns true if 'name' matches ext_context_pattern (or pattern is empty). */
+extern bool ctx_matches_target(const char *name);
+
+/* Returns true if 'name' is in the per-session allowlist. */
+extern bool is_allowed_context_target(const char *name);
 
 // Executor Hooks
 extern void install_executor_hooks(void);

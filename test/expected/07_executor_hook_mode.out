@@ -39,8 +39,9 @@ INFO:  Memory check session ended.
 (1 row)
 
 -- In EXECUTOR mode the hook must be active for executor statements
-SELECT ext_memcheck.begin('executor');
-INFO:  Memory check session started with mode: executor
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -159,8 +160,9 @@ INFO:  Memory check session ended.
 (1 row)
 
 -- In ALL mode the planner hook must also be active
-SELECT ext_memcheck.begin('all');
-INFO:  Memory check session started with mode: all
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.

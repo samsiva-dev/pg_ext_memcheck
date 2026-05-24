@@ -22,12 +22,14 @@ SELECT 2 AS probe;
 SELECT count(*) >= 0 AS viol_in_none_mode FROM ext_memcheck.end();
 
 -- In EXECUTOR mode the hook must be active for executor statements
-SELECT ext_memcheck.begin('executor');
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('');
 SELECT generate_series(1, 100) AS n;   -- exercise executor with some work
 SELECT count(*) >= 0 AS hook_ran FROM ext_memcheck.end();
 
 -- In ALL mode the planner hook must also be active
-SELECT ext_memcheck.begin('all');
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
 SELECT generate_series(1, 100) AS n;
 SELECT count(*) >= 0 AS hook_ran FROM ext_memcheck.end();
 

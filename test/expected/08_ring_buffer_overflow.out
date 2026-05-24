@@ -30,8 +30,9 @@ INFO:  Workload: SELECT 1
 (1 row)
 
 -- Extension must still respond normally after overflow
-SELECT ext_memcheck.begin('none');
-INFO:  Memory check session started with mode: none
+SET pg_ext_memcheck.memcheck_mode = 'none';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
