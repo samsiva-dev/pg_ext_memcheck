@@ -192,6 +192,9 @@ analyze_bloat(BloatSeries *series, int count, const int *ckpts)
         char detail[256];
 
         if (s->n < 2) continue;
+        /* Skip contexts that don't match the active target pattern, consistent
+         * with how analyze_and_log_diff scopes context_leak reporting. */
+        if (!ctx_matches_target(s->name)) continue;
         first = s->used[0];
         last  = s->used[s->n - 1];
         if (last <= first) continue;
@@ -383,16 +386,23 @@ memcheck_end(PG_FUNCTION_ARGS)
     session_start         = memcheck_session_start;
     memcheck_session_start = 0;
 
-    /* Clear per-session targeting state so the next begin() starts clean */
-    ext_context_pattern[0] = '\0';
-    ext_n_allowed_contexts = 0;
-    ext_track_shmem        = true;
-    ext_track_dsm          = true;
+    /* Capture track_dsm before clearing state so the guard below sees the
+     * value set by begin(), not the post-reset default. */
+    {
+        bool save_track_dsm = ext_track_dsm;
 
-    elog(INFO, "Memory check session ended.");
+        /* Clear per-session targeting state so the next begin() starts clean */
+        ext_context_pattern[0] = '\0';
+        ext_n_allowed_contexts = 0;
+        ext_track_shmem        = true;
+        ext_track_dsm          = true;
 
-    /* Flush any DSM leaks accumulated during this session into the violation log */
-    dsm_tracker_check_leaks();
+        elog(INFO, "Memory check session ended.");
+
+        /* Flush any DSM leaks accumulated during this session into the violation log */
+        if (save_track_dsm)
+            dsm_tracker_check_leaks();
+    }
 
     /* Verify caller can accept a set result */
     if (!rsinfo || !IsA(rsinfo, ReturnSetInfo) ||
@@ -548,6 +558,9 @@ static void
 run_shmem_sentinel_probe(int iterations, const char *workload)
 {
     int i;
+
+    if (!ext_track_shmem)
+        return; /* shmem tracking disabled for this session via track_shmem:false */
 
     if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");

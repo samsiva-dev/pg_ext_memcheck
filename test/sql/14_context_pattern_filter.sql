@@ -23,9 +23,10 @@ DELETE FROM ext_memcheck.violation_log;
 -- ----------------------------------------------------------------------------
 SET pg_ext_memcheck.memcheck_mode = 'all';
 SET pg_ext_memcheck.min_leak_bytes = '0';
+SET pg_ext_memcheck.bloat_min_bytes = '0';
 
 SELECT ext_memcheck.begin('__no_real_ctx_will_match_this__');
-SELECT ext_memcheck.run_scenario('growth_benchmark', 5) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
 SELECT count(*) AS violations_with_unmatched_pattern FROM ext_memcheck.end();
 
 -- ----------------------------------------------------------------------------
@@ -33,23 +34,24 @@ SELECT count(*) AS violations_with_unmatched_pattern FROM ext_memcheck.end();
 --    >= 0 violations (the hook fires and may record something).
 -- ----------------------------------------------------------------------------
 SELECT ext_memcheck.begin('');
-SELECT ext_memcheck.run_scenario('growth_benchmark', 5) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
 SELECT count(*) >= 0 AS violations_with_empty_pattern FROM ext_memcheck.end();
 
 -- ----------------------------------------------------------------------------
--- 3. allowlist suppresses TopMemoryContext violations: with threshold = 0 any
---    growth in TopMemoryContext is normally flagged as wrong_ctx_alloc.
---    Adding it to allowed_contexts must produce zero wrong_ctx_alloc rows for
---    that specific context.
+-- 3. allowlist suppresses wrong_ctx_alloc for named contexts: wrong_context_probe
+--    emits wrong_ctx_alloc for global contexts that grow (TopMemoryContext,
+--    CacheMemoryContext).  Adding them to allowed_contexts must produce zero
+--    wrong_ctx_alloc rows that mention those specific contexts.
 -- ----------------------------------------------------------------------------
 SELECT ext_memcheck.begin(
     '',
     '{"allowed_contexts": ["TopMemoryContext", "CacheMemoryContext"]}'
 );
-SELECT ext_memcheck.run_scenario('growth_benchmark', 5) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 10) IS NOT NULL AS ran;
 SELECT count(*) AS wrong_ctx_for_allowlisted
 FROM ext_memcheck.end()
-WHERE check_type = 'wrong_ctx_alloc';
+WHERE check_type = 'wrong_ctx_alloc'
+  AND (detail LIKE '%TopMemoryContext%' OR detail LIKE '%CacheMemoryContext%');
 
 -- ----------------------------------------------------------------------------
 -- 4. begin() with options but no pattern (NULL pattern treated as match-all)
@@ -79,4 +81,5 @@ $$;
 -- Cleanup
 DELETE FROM ext_memcheck.violation_log;
 RESET pg_ext_memcheck.min_leak_bytes;
+RESET pg_ext_memcheck.bloat_min_bytes;
 SET pg_ext_memcheck.memcheck_mode = 'none';
