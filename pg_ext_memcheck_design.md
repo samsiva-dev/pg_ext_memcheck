@@ -403,42 +403,66 @@ All functions live in the `ext_memcheck` schema.
 ```sql
 -- Start a test session targeting an extension by context name pattern
 SELECT ext_memcheck.begin(
-    ext_context_pattern TEXT,   -- e.g. 'MyExtCtx%'
-    options             JSONB   -- optional: {"track_shmem": true, "track_dsm": true}
+    ext_context_pattern TEXT DEFAULT '',  -- e.g. 'MyExtCtx%'
+    options             JSONB DEFAULT NULL -- optional: {"track_shmem": true, "track_dsm": true}
 );
 
 -- End the test session and return all findings
 SELECT * FROM ext_memcheck.end();
--- Returns: check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ
+-- Returns: check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT
 
 -- Run a named stress scenario
-SELECT * FROM ext_memcheck.run_scenario(
-    scenario_name TEXT,         -- e.g. 'context_reset_storm'
-    ext_context_pattern TEXT,
-    params JSONB                -- scenario-specific params: workers, iterations, etc.
+SELECT ext_memcheck.run_scenario(
+    scenario_name TEXT,                   -- e.g. 'growth_benchmark', 'tx_abort_loop'
+    iterations    INTEGER DEFAULT 100,
+    workload      TEXT    DEFAULT 'SELECT 1'
 );
 
--- Query the full violation log (across all sessions)
-SELECT * FROM ext_memcheck.violations
+-- Flush the in-memory violation ring buffer into violation_log; returns rows inserted
+SELECT ext_memcheck.flush_violations();
+
+-- Query the persisted violation log (across all sessions)
+SELECT * FROM ext_memcheck.violation_log
 ORDER BY ts DESC
 LIMIT 100;
 
 -- Clear the violation log
-SELECT ext_memcheck.clear_log();
+SELECT ext_memcheck.clear_violations();
 
 -- List available scenarios
 SELECT * FROM ext_memcheck.scenarios;
+
+-- DSM segment tracking
+SELECT * FROM ext_memcheck.dsm_tracking();
+SELECT ext_memcheck.track_dsm_handle(handle BIGINT);
+SELECT ext_memcheck.clear_dsm_tracking();
+
+-- Shared memory sentinel probe
+SELECT ext_memcheck.register_shmem_probe(seg_name TEXT, allocated_size BIGINT);
+SELECT ext_memcheck.clear_shmem_registry();
 ```
 
-**`ext_memcheck.violations` view columns:**
+**`ext_memcheck.violation_log` table columns:**
 
 | Column | Type | Notes |
 |---|---|---|
+| `id` | SERIAL | Primary key |
 | `ts` | TIMESTAMPTZ | When the violation was logged |
 | `backend_pid` | INT | Which backend ran the test |
 | `check_type` | TEXT | `context_leak`, `wrong_ctx_alloc`, `shmem_overrun`, `dsm_leak`, `ctx_bloat` |
 | `severity` | TEXT | `ERROR`, `WARN`, `OK` |
 | `detail` | TEXT | Human-readable detail |
+| `source_lib` | TEXT | Extension library that triggered the violation |
+
+**`ext_memcheck.dsm_tracking()` return columns:**
+
+| Column | Type | Notes |
+|---|---|---|
+| `segid` | BIGINT | DSM segment handle |
+| `backend_pid` | INT | Backend that attached the segment |
+| `attach_at` | TIMESTAMPTZ | When the segment was attached |
+| `size_bytes` | BIGINT | Segment size |
+| `detached` | BOOLEAN | Whether the segment has been detached |
 
 ---
 
