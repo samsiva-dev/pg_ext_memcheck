@@ -78,6 +78,21 @@ probe_register(const char *seg_name, Size alloc_size, Size data_end)
     }
 
     LWLockAcquire(&probe_registry->lock, LW_EXCLUSIVE);
+
+    /* Dedup: if this segment is already registered, update it in place. */
+    for (slot = 0; slot < probe_registry->count; slot++)
+    {
+        if (strncmp(probe_registry->records[slot].seg_name, seg_name,
+                    sizeof(probe_registry->records[slot].seg_name)) == 0)
+        {
+            probe_registry->records[slot].alloc_size = alloc_size;
+            probe_registry->records[slot].data_end   = data_end;
+            probe_registry->records[slot].registered = true;
+            LWLockRelease(&probe_registry->lock);
+            goto plant_sentinel;
+        }
+    }
+
     if (probe_registry->count >= SHMEM_PROBE_MAX_SEGMENTS)
     {
         LWLockRelease(&probe_registry->lock);
@@ -93,6 +108,8 @@ probe_register(const char *seg_name, Size alloc_size, Size data_end)
     probe_registry->records[slot].registered = true;
     probe_registry->count++;
     LWLockRelease(&probe_registry->lock);
+
+plant_sentinel:
 
     ((char *) base_ptr)[data_end] = (char) SHMEM_PROBE_SENTINEL_BYTE;
 }
