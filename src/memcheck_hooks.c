@@ -183,6 +183,80 @@ static const char *global_context_names[] = {
 
 bool memcheck_in_internal_query = false;
 
+/*
+ * Session-scoped targeting state — written by memcheck_begin() in sql_api.c,
+ * read here to filter violations to the target extension.
+ */
+char ext_context_pattern[NAMEDATALEN]                          = "";
+char ext_allowed_contexts[MEMCHECK_MAX_ALLOWED_CTXS][NAMEDATALEN];
+int  ext_n_allowed_contexts                                    = 0;
+bool ext_track_shmem                                           = true;
+bool ext_track_dsm                                             = true;
+
+/*
+ * ctx_name_matches_pattern
+ *
+ * Recursive helper implementing SQL LIKE semantics: '%' matches any sequence
+ * of characters, all other characters match literally (case-sensitive, which
+ * is correct for PostgreSQL context names).
+ */
+static bool
+ctx_name_matches_pattern(const char *name, const char *pat)
+{
+    if (pat == NULL || pat[0] == '\0')
+        return true;
+
+    while (*pat)
+    {
+        if (*pat == '%')
+        {
+            pat++;
+            /* Trailing % matches anything */
+            if (*pat == '\0')
+                return true;
+            /* Try matching the rest of the pattern at every position */
+            for (; *name; name++)
+                if (ctx_name_matches_pattern(name, pat))
+                    return true;
+            return false;
+        }
+        if (*name != *pat)
+            return false;
+        name++;
+        pat++;
+    }
+    return *name == '\0';
+}
+
+/*
+ * ctx_matches_target
+ *
+ * Returns true when 'name' should be monitored in the current session:
+ *   - Always true if ext_context_pattern is empty (monitor all contexts).
+ *   - Otherwise true only when 'name' matches the SQL LIKE pattern.
+ */
+bool
+ctx_matches_target(const char *name)
+{
+    return ctx_name_matches_pattern(name, ext_context_pattern);
+}
+
+/*
+ * is_allowed_context_target
+ *
+ * Returns true when 'name' appears in the per-session allowlist, meaning the
+ * context is explicitly permitted to grow without triggering a violation.
+ */
+bool
+is_allowed_context_target(const char *name)
+{
+    int i;
+    for (i = 0; i < ext_n_allowed_contexts; i++)
+        if (strcmp(ext_allowed_contexts[i], name) == 0)
+            return true;
+    return false;
+}
+
 // Helper function to determine if a context is a known global context or not
 // We will use this when we are checking for wrong context allocations.
 static bool
@@ -230,6 +304,16 @@ check_wrong_context_alloc(CtxTree *before, CtxTree *after)
 
         if (!is_global_context(after_snapshot_entry->name))
             continue;
+
+        /*
+         * Allowlist check: if the caller explicitly permitted this context
+         * (e.g., allowed_contexts := ARRAY['TopMemoryContext']), skip it so
+         * that extensions which intentionally cache data across queries are
+         * not falsely flagged.
+         */
+        if (is_allowed_context_target(after_snapshot_entry->name))
+            continue;
+
         for (j = 0; j < before->count; j++)
         {
             CtxSnapshot *b = &before->entries[j];
@@ -284,6 +368,15 @@ check_wrong_context_alloc(CtxTree *before, CtxTree *after)
                     is_global_context(P->name))
                 {
                     char detail_msg[256];
+
+                    /*
+                     * Allowlist check: skip if the parent context is
+                     * explicitly allowed to grow (e.g., the extension caches
+                     * data in a child of TopMemoryContext by design).
+                     */
+                    if (is_allowed_context_target(P->name))
+                        continue;
+
                     snprintf(detail_msg, sizeof(detail_msg),
                              "new context '%s' (depth %d) created under a global parent '%s' (depth %d)",
                              after_snapshot_entry->name, after_snapshot_entry->depth,
@@ -316,6 +409,16 @@ analyze_and_log_diff(CtxDiff *diff)
     Size        delta_used;
     const char *severity;
     char        detail[256];
+
+    /*
+     * Skip contexts that don't match the active target pattern.  When
+     * ext_context_pattern is empty the check is a no-op and all contexts are
+     * monitored (pre-pattern behaviour).  When a pattern is set, only contexts
+     * whose names match are reported, eliminating false positives from normal
+     * PostgreSQL core context growth.
+     */
+    if (!ctx_matches_target(diff->name))
+        return;
 
     /*
      * Use net bytes consumed (allocated - free) as the signal rather than

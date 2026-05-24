@@ -43,6 +43,18 @@ The entry point. Registers `ExecutorStart_hook`, `ExecutorEnd_hook`, and `planne
 
 In `EXECUTOR` mode only the executor hooks are active. In `ALL` mode the planner hook fires first, giving broader coverage of planning-phase allocations.
 
+**Targeting state** is stored as module-level variables set by `memcheck_begin()` and cleared by `memcheck_end()`:
+
+| Variable | Purpose |
+|---|---|
+| `ext_context_pattern` | SQL `LIKE` pattern; only contexts whose names match are analysed. Empty string = all. |
+| `ext_allowed_contexts[]` | Allowlist of context names that may grow without triggering a `wrong_ctx_alloc` violation. |
+| `ext_n_allowed_contexts` | Number of valid entries in the allowlist. |
+| `ext_track_shmem` | Whether shmem sentinel checks are active this session. |
+| `ext_track_dsm` | Whether DSM leak checks are active this session. |
+
+`analyze_and_log_diff()` calls `ctx_matches_target()` and skips any diff entry whose context name does not match the pattern. `check_wrong_context_alloc()` calls `is_allowed_context_target()` in both passes and skips allowlisted contexts.
+
 ---
 
 ### context_walker.c
@@ -124,15 +136,22 @@ A `BackgroundWorker` process that accepts scenario run requests via a shared mes
 ```
 Client backend
   │
-  ├─ SELECT ext_memcheck.begin();
-  │       └─ sets memcheck_mode to 'executor' or 'all'
+  ├─ SET pg_ext_memcheck.memcheck_mode = 'executor';
+  │
+  ├─ SELECT ext_memcheck.begin('MyExtCtx%',
+  │         '{"allowed_contexts": ["TopMemoryContext"]}');
+  │       └─ writes ext_context_pattern + allowlist into memcheck_hooks.c state
   │
   ├─ SELECT ext_memcheck.run_scenario('growth_benchmark', 200);
   │
   ├─ SELECT ext_memcheck.end();
   │       ├─ context_walker: post-snapshot
-  │       ├─ diff: pre vs. post → violations found
-  │       └─ violation_log: entries written to ring buffer (LWLock)
+  │       ├─ diff: pre vs. post
+  │       │     └─ ctx_matches_target() filters to 'MyExtCtx%' only
+  │       ├─ check_wrong_context_alloc()
+  │       │     └─ is_allowed_context_target() skips 'TopMemoryContext'
+  │       ├─ violation_log: qualifying entries written to ring buffer (LWLock)
+  │       └─ targeting state cleared (pattern, allowlist reset to defaults)
   OR
   └─ SELECT * FROM ext_memcheck.flush_violations();
           ├─ violation_log: drain ring buffer → INSERT into violation_log table

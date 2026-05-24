@@ -34,8 +34,8 @@ SELECT ext_memcheck.flush_violations() AS flushed;
 
 -- Run a scenario to populate the ring buffer
 SET pg_ext_memcheck.memcheck_mode = 'all';
-SELECT ext_memcheck.begin('all');
-INFO:  Memory check session started with mode: all
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -59,8 +59,9 @@ INFO:  Memory check session ended.
 (1 row)
 
 -- flush_violations persists ring buffer rows into the table
-SELECT ext_memcheck.begin('all');
-INFO:  Memory check session started with mode: all
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -75,13 +76,7 @@ INFO:  Workload: SELECT 1
  Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
 (1 row)
 
-SELECT ext_memcheck.begin('none');
-INFO:  Memory check session started with mode: none
-             begin             
--------------------------------
- Memory check session started.
-(1 row)
-
+SET pg_ext_memcheck.memcheck_mode = 'none';
 SELECT ext_memcheck.flush_violations() >= 0 AS flush_ok;
  flush_ok 
 ----------

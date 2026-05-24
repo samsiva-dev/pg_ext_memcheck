@@ -54,7 +54,8 @@ In this example, we see three `context_leak` violations:
 ## Scenario - growth_benchmark 
 You can also run a more extensive scenario that executes the same query in a loop to see how the leaks accumulate over time:
 ```sql
-select ext_memcheck.begin('all');
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
 SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT count(*) FROM companies;');
 SELECT * FROM ext_memcheck.end();
 ```
@@ -100,6 +101,31 @@ After 1000 iterations the accumulated leaks cross multiple severity thresholds. 
 - The `BuggyPlannerLeakCtx` remains an `INFO` because it is still under `64KB`, but you can see how it grows across iterations.
 
 ## More testing options
-Now you can try with memcheck_mode set to `executor` to only capture executor-phase violations, or `none` to disable automatic hooks and use the manual `begin()` / `end()` API for more fine-grained control over the test window. You can also test with other workloads or scenarios like `tx_abort_loop`, and inspect the violation log to understand the memory behavior of your extension under different conditions. 
+Now you can try with memcheck_mode set to `executor` to only capture executor-phase violations:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+```
+
+Or disable the automatic hooks entirely and use the manual `begin()` / `end()` API for fine-grained control over the test window. Pass a context-name pattern to scope reporting to your extension's own contexts and eliminate noise from PostgreSQL internals:
+
+```sql
+SET pg_ext_memcheck.memcheck_mode = 'all';
+-- Only report contexts whose names start with 'Buggy'
+SELECT ext_memcheck.begin('Buggy%');
+SELECT count(*) FROM companies;
+SELECT * FROM ext_memcheck.end();
+```
+
+If your extension intentionally allocates in `TopMemoryContext` (for a cross-query cache, for example), suppress the resulting `wrong_ctx_alloc` violations with an allowlist:
+
+```sql
+SELECT ext_memcheck.begin(
+    'Buggy%',
+    '{"allowed_contexts": ["TopMemoryContext"]}'
+);
+```
+
+You can also test with other workloads or scenarios like `tx_abort_loop`, and inspect the violation log to understand the memory behavior of your extension under different conditions.
 
 The `source_lib` column is particularly useful to confirm that the violations are indeed coming from your extension (e.g., `buggy_pg_ext.dylib`) and not from PostgreSQL internals or other extensions.

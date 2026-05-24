@@ -21,7 +21,8 @@ DELETE FROM ext_memcheck.violation_log;
 SELECT ext_memcheck.run_scenario('growth_benchmark', 300) IS NOT NULL AS ok;
 
 -- Extension must still respond normally after overflow
-SELECT ext_memcheck.begin('none');
+SET pg_ext_memcheck.memcheck_mode = 'none';
+SELECT ext_memcheck.begin('');
 SELECT count(*) >= 0 AS survived FROM ext_memcheck.end();
 
 -- flush_violations must still work after overflow

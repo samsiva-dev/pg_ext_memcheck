@@ -42,10 +42,13 @@ LANGUAGE C STRICT;
     ext_memcheck.run_scenario - Run a predefined test scenario by name (e.g. 'context_reset_storm', 'tx_abort_loop', etc.)
 */
 
-CREATE OR REPLACE FUNCTION ext_memcheck.begin(target_mode TEXT)
+CREATE OR REPLACE FUNCTION ext_memcheck.begin(
+    ext_context_pattern TEXT DEFAULT '',
+    options JSONB DEFAULT NULL
+)
 RETURNS TEXT
 AS 'pg_ext_memcheck', 'memcheck_begin'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 CREATE OR REPLACE FUNCTION ext_memcheck.end()
 RETURNS TABLE(check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ, source_lib TEXT)

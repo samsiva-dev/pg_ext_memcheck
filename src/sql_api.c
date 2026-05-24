@@ -34,6 +34,9 @@
 // Storage Includes
 #include "storage/dsm.h"
 
+// JSONB for options parsing
+#include "utils/jsonb.h"
+
 // Local Includes
 #include "include/pg_ext_memcheck.h"
 #include "include/gucs.h"
@@ -43,7 +46,18 @@
 #include "include/dsm_tracker.h"
 #include "include/shmem_probe.h"
 
-#define MAX_CHECKPOINTS 8 
+#define MAX_CHECKPOINTS 8
+
+/*
+ * Per-session start timestamp set by memcheck_begin() and consumed by
+ * memcheck_end().  end() passes this to violation_log_read_session() so that
+ * only violations logged *during* the current session window are returned,
+ * filtering out anything written before begin() was called (by other sessions
+ * or by a previous begin()/end() cycle in the same backend).
+ *
+ * Value 0 (epoch) means no session is active; end() returns an empty set.
+ */
+static TimestampTz memcheck_session_start = 0;
 
 typedef struct BloatSeries {
     char    name[NAMEDATALEN];
@@ -63,15 +77,6 @@ static Size ctx_used_bytes(const CtxSnapshot *s);
 static int build_checkpoints(int iterations, int *ckpts);
 static void record_checkpoint(BloatSeries **series, int *count, int *cap,
                 int ckpt_idx, MemoryContext bench_ctx);
-
-/*
- * memcheck_session_start -- backend-local timestamp set by memcheck_begin().
- *
- * Used by memcheck_end() to drain only violations that belong to the current
- * session (backend_pid == MyProcPid AND ts >= memcheck_session_start).
- * DT_NOBEGIN means no session is active.
- */
-static TimestampTz memcheck_session_start = DT_NOBEGIN;
 static void analyze_bloat(BloatSeries *series, int count, const int *ckpts);
 
 /* Helper function to calculate used bytes from a context snapshot. */
@@ -226,37 +231,137 @@ analyze_bloat(BloatSeries *series, int count, const int *ckpts)
 /*
  * memcheck_begin -- SQL-callable function to start a memory check session.
  *
- * This function sets the memcheck_mode based on the provided argument and initializes any necessary state.
+ * Arguments:
+ *   ext_context_pattern TEXT   -- SQL LIKE pattern (% wildcard) for context names
+ *                                 to monitor, e.g. 'MyExtCtx%'.  Empty string
+ *                                 monitors all contexts (pre-scoping behaviour).
+ *   options JSONB DEFAULT NULL  -- Optional targeting options:
+ *                                  {
+ *                                    "track_shmem":      bool (default true),
+ *                                    "track_dsm":        bool (default true),
+ *                                    "allowed_contexts": ["CtxName", ...]
+ *                                  }
+ *                                  allowed_contexts is an allowlist: contexts in
+ *                                  this list are never flagged even if they grow.
+ *
+ * Stores the targeting state into module-level variables in memcheck_hooks.c
+ * that are consulted by analyze_and_log_diff() and check_wrong_context_alloc()
+ * to scope detection to the target extension.  The monitoring mode
+ * (all / executor / none) is controlled separately via the
+ * pg_ext_memcheck.memcheck_mode GUC.
  */
 PG_FUNCTION_INFO_V1(memcheck_begin);
 Datum
 memcheck_begin(PG_FUNCTION_ARGS)
 {
-    text *mode_text = PG_GETARG_TEXT_PP(0);
-    char *mode_str = text_to_cstring(mode_text);
+    text    *pattern_text;
+    char    *pattern_str;
+    int      pattern_len;
 
-    if (strcmp(mode_str, "executor") == 0)
-        memcheck_mode = MEMCHECK_EXECUTOR;
-    else if (strcmp(mode_str, "none") == 0)
-        memcheck_mode = MEMCHECK_NONE;
+    /* First arg: ext_context_pattern (not null; empty string = match all) */
+    if (PG_ARGISNULL(0))
+        pattern_str = "";
     else
-        memcheck_mode = MEMCHECK_ALL; // Default to ALL if unrecognized
+    {
+        pattern_text = PG_GETARG_TEXT_PP(0);
+        pattern_str  = text_to_cstring(pattern_text);
+    }
 
-    /* Record the session start time for scoped draining in memcheck_end(). */
+    pattern_len = strlen(pattern_str);
+    if (pattern_len >= NAMEDATALEN)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ext_context_pattern too long (max %d characters)",
+                        NAMEDATALEN - 1)));
+
+    strncpy(ext_context_pattern, pattern_str, NAMEDATALEN);
+    ext_context_pattern[NAMEDATALEN - 1] = '\0';
+
+    /* Reset options to defaults before applying any caller-supplied values */
+    ext_track_shmem        = true;
+    ext_track_dsm          = true;
+    ext_n_allowed_contexts = 0;
+
+    /* Second arg: options JSONB (optional — may be NULL or omitted) */
+    if (!PG_ARGISNULL(1))
+    {
+        Jsonb              *opts = PG_GETARG_JSONB_P(1);
+        JsonbIterator      *it;
+        JsonbValue          v;
+        JsonbIteratorToken  tok;
+        char                cur_key[64] = "";
+        bool                in_allowed_array = false;
+
+        it = JsonbIteratorInit(&opts->root);
+        while ((tok = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
+        {
+            switch (tok)
+            {
+                case WJB_KEY:
+                {
+                    int klen = Min((int) v.val.string.len,
+                                   (int) sizeof(cur_key) - 1);
+                    memcpy(cur_key, v.val.string.val, klen);
+                    cur_key[klen]    = '\0';
+                    in_allowed_array = false;
+                    break;
+                }
+                case WJB_VALUE:
+                    if (strcmp(cur_key, "track_shmem") == 0 &&
+                        v.type == jbvBool)
+                        ext_track_shmem = v.val.boolean;
+                    else if (strcmp(cur_key, "track_dsm") == 0 &&
+                             v.type == jbvBool)
+                        ext_track_dsm = v.val.boolean;
+                    break;
+                case WJB_BEGIN_ARRAY:
+                    if (strcmp(cur_key, "allowed_contexts") == 0)
+                        in_allowed_array = true;
+                    break;
+                case WJB_END_ARRAY:
+                    in_allowed_array = false;
+                    break;
+                case WJB_ELEM:
+                    if (in_allowed_array && v.type == jbvString &&
+                        ext_n_allowed_contexts < MEMCHECK_MAX_ALLOWED_CTXS)
+                    {
+                        int elen = Min((int) v.val.string.len,
+                                       NAMEDATALEN - 1);
+                        memcpy(ext_allowed_contexts[ext_n_allowed_contexts],
+                               v.val.string.val, elen);
+                        ext_allowed_contexts[ext_n_allowed_contexts][elen] = '\0';
+                        ext_n_allowed_contexts++;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /* Record the window start time before logging so the INFO message itself
+     * (which may trigger hook re-entry in ALL mode) is excluded from this
+     * session's results. */
     memcheck_session_start = GetCurrentTimestamp();
 
-     elog(INFO, "Memory check session started with mode: %s", mode_str);
+    elog(INFO, "Memory check session started: pattern='%s', allowed_contexts=%d",
+         ext_context_pattern[0] ? ext_context_pattern : "(all)",
+         ext_n_allowed_contexts);
 
-     PG_RETURN_TEXT_P(cstring_to_text("Memory check session started."));
+    PG_RETURN_TEXT_P(cstring_to_text("Memory check session started."));
 }
 
 /*
  * memcheck_end -- SQL-callable function to end a memory check session.
  *
- * This function resets the memcheck_mode to MEMCHECK_NONE and performs any necessary cleanup.
- * and returns the results of the memory check session, such as any logged violations in the 
- * format check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ by reading from the shared violation log.
- * 
+ * Closes the current test window.  Returns the subset of ring-buffer entries
+ * that belong to this session:
+ *   backend_pid == MyProcPid  AND  ts >= memcheck_session_start
+ *
+ * Matched entries are atomically zeroed from the ring buffer so that a second
+ * call to end() returns 0 rows, and flush_violations() never re-surfaces them.
+ * If begin() was not called (memcheck_session_start == 0) an empty set is
+ * returned.
  */
 PG_FUNCTION_INFO_V1(memcheck_end);
 Datum
@@ -265,11 +370,24 @@ memcheck_end(PG_FUNCTION_ARGS)
     ReturnSetInfo   *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
     TupleDesc        tupdesc;
     Tuplestorestate *tupstore;
-    ViolationEntry  *entries;
+    ViolationEntry  *entries = NULL;
     int              n_entries = 0;
     int              i;
+    TimestampTz      session_start;
 
     memcheck_mode = MEMCHECK_NONE;
+
+    /* Snapshot and reset the session start time before any further work so
+     * that violations written by dsm_tracker_check_leaks() (called below)
+     * are included in this window if they arrive after we save the value. */
+    session_start         = memcheck_session_start;
+    memcheck_session_start = 0;
+
+    /* Clear per-session targeting state so the next begin() starts clean */
+    ext_context_pattern[0] = '\0';
+    ext_n_allowed_contexts = 0;
+    ext_track_shmem        = true;
+    ext_track_dsm          = true;
 
     elog(INFO, "Memory check session ended.");
 
@@ -282,6 +400,13 @@ memcheck_end(PG_FUNCTION_ARGS)
         ereport(ERROR,
                 (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                  errmsg("set-valued function called in context that cannot accept a set")));
+
+    /*
+     * Drain only this session's entries from the shared ring buffer.
+     * session_start == 0 means begin() was never called; return empty set.
+     */
+    if (session_start != 0)
+        entries = violation_log_read_session(MyProcPid, session_start, &n_entries);
 
     {
         MemoryContext    oldcontext;
@@ -305,40 +430,18 @@ memcheck_end(PG_FUNCTION_ARGS)
         rsinfo->setResult = tupstore;
         rsinfo->setDesc = tupdesc;
 
-        /*
-         * Drain only violations that belong to the current session:
-         *   - backend_pid must match MyProcPid (own backend)
-         *   - ts must be >= memcheck_session_start (set by memcheck_begin)
-         *
-         * Matched slots are zeroed from the ring atomically, so a second call
-         * to end() or flush_violations() will not see the same rows.
-         *
-         * Contrast with flush_violations(), which drains the entire ring across
-         * all backends and inserts rows into ext_memcheck.violation_log.
-         */
-        if (memcheck_session_start != DT_NOBEGIN)
+        for (i = 0; i < n_entries; i++)
         {
-            entries = violation_log_read_session(MyProcPid, memcheck_session_start, &n_entries);
-            if (entries != NULL)
-            {
-                for (i = 0; i < n_entries; i++)
-                {
-                    ViolationEntry *e = &entries[i];
+            ViolationEntry *e = &entries[i];
 
-                    values[0] = CStringGetTextDatum(e->check_type);
-                    values[1] = CStringGetTextDatum(e->severity);
-                    values[2] = CStringGetTextDatum(e->detail);
-                    values[3] = TimestampTzGetDatum(e->ts);
-                    values[4] = CStringGetTextDatum(e->source_lib);
+            values[0] = CStringGetTextDatum(e->check_type);
+            values[1] = CStringGetTextDatum(e->severity);
+            values[2] = CStringGetTextDatum(e->detail);
+            values[3] = TimestampTzGetDatum(e->ts);
+            values[4] = CStringGetTextDatum(e->source_lib);
 
-                    tuplestore_putvalues(tupstore, tupdesc, values, nulls);
-                }
-                pfree(entries);
-            }
+            tuplestore_putvalues(tupstore, tupdesc, values, nulls);
         }
-
-        /* Reset so a subsequent end() without begin() returns nothing. */
-        memcheck_session_start = DT_NOBEGIN;
 
         MemoryContextSwitchTo(oldcontext);
     }
@@ -360,9 +463,9 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 {
     text    *scenario_text = PG_GETARG_TEXT_PP(0);
     char    *scenario_str  = text_to_cstring(scenario_text);
-    int      iterations    = PG_GETARG_INT32(1);
-    text    *workload_text = PG_GETARG_TEXT_PP(2);
-    char    *workload_str  = text_to_cstring(workload_text);
+    int      iterations    = PG_NARGS() > 1 ? PG_GETARG_INT32(1) : 100;
+    text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
+    char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
     CtxTree *before_snapshot_tree = NULL;
     CtxTree *after_snapshot_tree;
     CtxDiff *diffs;
@@ -450,8 +553,8 @@ run_shmem_sentinel_probe(int iterations, const char *workload)
         elog(ERROR, "Iterations must be a positive integer");
 
     /* Register sentinels for our own shmem segments (allocated with +1 byte). */
-    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog) + 1, sizeof(ViolationLog)); /* sentinel at the end of the struct */
-    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState) + 1, sizeof(DsmTrackerState)); /* sentinel at the end of the struct */
+    probe_register("pg_ext_memcheck ViolationLog", sizeof(ViolationLog) + 1, sizeof(ViolationLog));
+    probe_register("pg_ext_memcheck DsmTrackerState", sizeof(DsmTrackerState) + 1, sizeof(DsmTrackerState));
 
     if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
@@ -689,7 +792,10 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
 
     seg = dsm_attach(handle);
     if (seg == NULL)
+    {
         elog(ERROR, "Failed to attach to DSM segment with handle %u", handle);
+        PG_RETURN_NULL();
+    }
 
     seg_size = dsm_segment_map_length(seg);
 
@@ -707,31 +813,45 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text("DSM segment tracked."));
 }
 
-PG_FUNCTION_INFO_V1(clear_dsm_tracking);
-Datum
-clear_dsm_tracking(PG_FUNCTION_ARGS)
-{
-    if (dsm_tracker_state == NULL)
-        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
-    
-    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
-    dsm_tracker_state->count = 0; 
-    LWLockRelease(&dsm_tracker_state->lock);    
-    elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
-    PG_RETURN_VOID();
-}
-
+/*
+ * shmem_probe_register -- SQL-callable wrapper for probe_register().
+ *
+ * Registers a sentinel byte just past the declared end of a named shared-memory
+ * segment.  allocated_size must be the exact byte count passed to
+ * ShmemInitStruct() by the owning extension (i.e. data_size + 1, where the
+ * +1 is the sentinel byte that pg_ext_memcheck reserved).
+ *
+ * Returns a TEXT confirmation message so the caller can verify the C function
+ * actually returned a pointer (a VOID mismatch would crash here via detoast).
+ */
 PG_FUNCTION_INFO_V1(shmem_probe_register);
-Datum 
+Datum
 shmem_probe_register(PG_FUNCTION_ARGS)
 {
-    text *name_text = PG_GETARG_TEXT_PP(0);
-    char *name_str  = text_to_cstring(name_text);
-    Size size_bytes = (Size) PG_GETARG_INT64(1);
+    text    *seg_name_text  = PG_GETARG_TEXT_PP(0);
+    int64    allocated_size = PG_GETARG_INT64(1);
+    char    *seg_name;
+    char     msg[256];
 
-    probe_register(name_str, size_bytes, size_bytes); /* sentinel at the end of the segment */
-    elog(INFO, "Registered shmem probe '%s' with size %zu bytes", name_str, size_bytes);
-    PG_RETURN_TEXT_P(cstring_to_text("Registered shmem probe."));
+    if (allocated_size <= 0)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("pg_ext_memcheck: allocated_size must be greater than 0")));
+
+    seg_name = text_to_cstring(seg_name_text);
+
+    /*
+     * data_end = allocated_size: the sentinel occupies the last byte of
+     * the allocation.  probe_register() validates that this lands within the
+     * cache-line-aligned chunk before planting the byte.
+     */
+    probe_register(seg_name, (Size) allocated_size, (Size) (allocated_size));
+
+    snprintf(msg, sizeof(msg),
+             "Registered shmem probe for segment '%s' (allocated_size=%lld bytes)",
+             seg_name, (long long) allocated_size);
+
+    PG_RETURN_TEXT_P(cstring_to_text(msg));
 }
 
 PG_FUNCTION_INFO_V1(shmem_probe_clear_registry);
@@ -743,5 +863,19 @@ shmem_probe_clear_registry(PG_FUNCTION_ARGS)
 
     probe_registry_clear();
     elog(INFO, "Cleared shmem probe registry in pg_ext_memcheck");
+    PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(clear_dsm_tracking);
+Datum
+clear_dsm_tracking(PG_FUNCTION_ARGS)
+{
+    if (dsm_tracker_state == NULL)
+        PG_RETURN_NULL(); /* tracker not initialized, should not happen but be defensive */
+    
+    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
+    dsm_tracker_state->count = 0; 
+    LWLockRelease(&dsm_tracker_state->lock);    
+    elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
     PG_RETURN_VOID();
 }

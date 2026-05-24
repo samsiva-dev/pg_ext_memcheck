@@ -19,14 +19,15 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 -- Flush any leftover violations from previous tests
 SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
 
--- Begin a session in 'none' mode
-SELECT ext_memcheck.begin('none');
+-- Begin a session with no pattern (match all) while mode is 'none'
+SELECT ext_memcheck.begin('');
 
 -- End the session - should return 0 rows because no violations were generated
 SELECT count(*) AS violation_count FROM ext_memcheck.end();
 
 -- Begin a session in 'executor' mode
-SELECT ext_memcheck.begin('executor');
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('');
 SHOW pg_ext_memcheck.memcheck_mode;
 
 -- End the session
@@ -35,9 +36,15 @@ SELECT count(*) AS violation_count FROM ext_memcheck.end();
 -- Confirm memcheck_mode is now 'none' after end()
 SHOW pg_ext_memcheck.memcheck_mode;
 
--- Begin with unrecognised mode should default to 'all'
-SELECT ext_memcheck.begin('unrecognised_mode');
-SHOW pg_ext_memcheck.memcheck_mode;
+-- begin() accepts a context pattern (SQL LIKE syntax)
+SELECT ext_memcheck.begin('TestExt%') LIKE 'Memory check%' AS pattern_accepted;
+
+-- begin() accepts a JSONB options block with allowlist
+SELECT ext_memcheck.begin(
+    'MyExt%',
+    '{"track_shmem": true, "track_dsm": true, "allowed_contexts": ["TopMemoryContext"]}'
+) LIKE 'Memory check%' AS options_accepted;
+
 -- Cleanup
-SELECT ext_memcheck.begin('none');
+SET pg_ext_memcheck.memcheck_mode = 'none';
 SELECT count(*) FROM ext_memcheck.end();

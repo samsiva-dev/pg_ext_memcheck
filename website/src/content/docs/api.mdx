@@ -53,25 +53,55 @@ SELECT * FROM ext_memcheck.violation_log;
 
 ## ext_memcheck.begin()
 
-Opens a manual test window and sets the `pg_ext_memcheck.memcheck_mode` mode based to the provided target. 
+Opens a manual test window targeting a specific extension by context-name pattern. The monitoring mode (`all` / `executor` / `none`) is controlled separately by the `pg_ext_memcheck.memcheck_mode` GUC — `begin()` does **not** change the mode.
 
 ```sql
-SELECT ext_memcheck.begin('executor');  -- check executor phase only
-SELECT ext_memcheck.begin('all');       -- check planner + executor phases
+-- Scope checks to contexts whose names match the SQL LIKE pattern 'MyExtCtx%'
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('MyExtCtx%');
+
+-- Monitor all contexts (empty pattern = no filter)
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+
+-- With options: allowlist contexts that are permitted to grow, and opt out of DSM checks
+SELECT ext_memcheck.begin(
+    'MyExtCtx%',
+    '{"track_shmem": true, "track_dsm": false, "allowed_contexts": ["TopMemoryContext"]}'
+);
 ```
 
-**Parameter:** `target_mode TEXT` — one of `'all'`, `'executor'`, or `'none'`. Unrecognised values default to `'all'`.
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `ext_context_pattern` | `text` | `''` | SQL `LIKE` pattern (`%` wildcard) for context names to monitor. An empty string monitors all contexts. Example: `'MyExtCtx%'` monitors only contexts whose names start with `MyExtCtx`. |
+| `options` | `jsonb` | `NULL` | Optional JSON object with the following keys: |
+
+**`options` keys:**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `track_shmem` | `bool` | `true` | Whether shmem sentinel checks are active for this session. |
+| `track_dsm` | `bool` | `true` | Whether DSM leak checks are active for this session. |
+| `allowed_contexts` | `text[]` | `[]` | Allowlist of context names that are explicitly permitted to grow without triggering a `wrong_ctx_alloc` violation. For example, extensions that intentionally cache data in `TopMemoryContext` across queries should list it here to suppress false positives. |
 
 **Returns:** `text` — confirmation message.
 
-Use this when you want finer-grained control than the automatic executor-hook window:
+**Why scope matters:** Without a pattern, every PostgreSQL core context that grows during a query (e.g., `CacheMemoryContext`, `ExprContext`) is reported and attributed to whatever hook libraries are loaded. A targeted pattern eliminates these false positives and pinpoints violations to the extension under test.
 
 ```sql
-SELECT ext_memcheck.begin('executor');
+-- Full targeted session example
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin(
+    'MyExtCtx%',
+    '{"allowed_contexts": ["TopMemoryContext"]}'
+);
 
--- Run some queries or operations here,
--- that you want to test for leaks or other violations.
+-- Run the function under test
+SELECT my_extension.do_work();
 
+-- End the window; returns only violations from contexts matching 'MyExtCtx%'
 SELECT * FROM ext_memcheck.end();
 ```
 
@@ -231,6 +261,10 @@ Set these in `postgresql.conf` or with `SET` at session scope (`PGC_USERSET` —
 | `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | Controls which parts of query execution are instrumented. See below. |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored. |
 | `pg_ext_memcheck.bloat_min_bytes` | `int` | `16384` | Minimum cumulative growth in bytes for a context to be reported as bloating by `growth_benchmark`. Contexts that grow by less than this amount across checkpoints are silently ignored. |
+
+<Aside type="note" title="Monitoring mode vs. targeting">
+`memcheck_mode` controls **which execution phases** are hooked (planner + executor vs. executor-only vs. off). The `ext_context_pattern` and `allowed_contexts` arguments to `begin()` control **which contexts** are reported within those phases. The two are independent — set the GUC once for the session and vary the `begin()` arguments per test.
+</Aside>
 
 ---
 

@@ -25,15 +25,16 @@ SELECT ext_memcheck.flush_violations() AS flushed;
 
 -- Run a scenario to populate the ring buffer
 SET pg_ext_memcheck.memcheck_mode = 'all';
-SELECT ext_memcheck.begin('all');
+SELECT ext_memcheck.begin('');
 SELECT ext_memcheck.run_scenario('growth_benchmark', 5);
 -- end() drains the ring buffer into the result set; count should be >= 0
 SELECT count(*) >= 0 AS has_rows FROM ext_memcheck.end();
 
 -- flush_violations persists ring buffer rows into the table
-SELECT ext_memcheck.begin('all');
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
 SELECT ext_memcheck.run_scenario('growth_benchmark', 5);
-SELECT ext_memcheck.begin('none');
+SET pg_ext_memcheck.memcheck_mode = 'none';
 SELECT ext_memcheck.flush_violations() >= 0 AS flush_ok;
 
 -- Persistent table should now have rows (>= 0)

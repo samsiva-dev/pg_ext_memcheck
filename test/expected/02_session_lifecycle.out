@@ -19,9 +19,9 @@ SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
  t
 (1 row)
 
--- Begin a session in 'none' mode
-SELECT ext_memcheck.begin('none');
-INFO:  Memory check session started with mode: none
+-- Begin a session with no pattern (match all) while mode is 'none'
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -36,8 +36,9 @@ INFO:  Memory check session ended.
 (1 row)
 
 -- Begin a session in 'executor' mode
-SELECT ext_memcheck.begin('executor');
-INFO:  Memory check session started with mode: executor
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
 -------------------------------
  Memory check session started.
@@ -64,28 +65,27 @@ SHOW pg_ext_memcheck.memcheck_mode;
  none
 (1 row)
 
--- Begin with unrecognised mode should default to 'all'
-SELECT ext_memcheck.begin('unrecognised_mode');
-INFO:  Memory check session started with mode: unrecognised_mode
-             begin             
--------------------------------
- Memory check session started.
+-- begin() accepts a context pattern (SQL LIKE syntax)
+SELECT ext_memcheck.begin('TestExt%') LIKE 'Memory check%' AS pattern_accepted;
+INFO:  Memory check session started: pattern='TestExt%', allowed_contexts=0
+ pattern_accepted 
+------------------
+ t
 (1 row)
 
-SHOW pg_ext_memcheck.memcheck_mode;
- pg_ext_memcheck.memcheck_mode 
--------------------------------
- all
+-- begin() accepts a JSONB options block with allowlist
+SELECT ext_memcheck.begin(
+    'MyExt%',
+    '{"track_shmem": true, "track_dsm": true, "allowed_contexts": ["TopMemoryContext"]}'
+) LIKE 'Memory check%' AS options_accepted;
+INFO:  Memory check session started: pattern='MyExt%', allowed_contexts=1
+ options_accepted 
+------------------
+ t
 (1 row)
 
 -- Cleanup
-SELECT ext_memcheck.begin('none');
-INFO:  Memory check session started with mode: none
-             begin             
--------------------------------
- Memory check session started.
-(1 row)
-
+SET pg_ext_memcheck.memcheck_mode = 'none';
 SELECT count(*) FROM ext_memcheck.end();
 INFO:  Memory check session ended.
  count 
