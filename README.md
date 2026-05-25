@@ -15,7 +15,7 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 | MemoryContext leak | ✗ | ✗ | ✓ |
 | Wrong-context palloc | ✗ | ✗ | ✓ |
 | Shmem boundary overrun | ± | ± | ✓ |
-| DSM segment leak | ✗ | ✗ | ✓ |
+| DSM segment leak | ✗ | ✗ | ± (manual, cross-session only) |
 | Use-after-reset bug | ✗ | ✗ | ✗ *(Phase 2)* |
 | Context growth / bloat | ✗ | ✗ | ✓ |
 | Heap use-after-free | ✓ | ✓ | ✗ |
