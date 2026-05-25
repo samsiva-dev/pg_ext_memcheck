@@ -440,14 +440,15 @@ analyze_and_log_diff(CtxDiff *diff)
 
     delta_used = after_used - before_used;
 
+    if (delta_used < (Size) memcheck_min_leak_bytes)
+        return; /* below the configured floor, skip silently */
+
     if (delta_used > (Size)(1 * 1024 * 1024))        /* > 1 MiB */
         severity = "ERROR";
     else if (delta_used > (Size)(64 * 1024))          /* > 64 KiB */
         severity = "WARNING";
-    else if (delta_used >= (Size) memcheck_min_leak_bytes)
-        severity = "INFO";
     else
-        return; /* below the configured threshold, skip silently */
+        severity = "INFO";
 
     snprintf(detail, sizeof(detail),
              "context '%s' (depth %d): used grew by %zu bytes "
@@ -568,9 +569,6 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         // Check for wrong context allocations in known global contexts and new contexts created under global parents, 
         // which are common patterns of wrong context usage that can lead to memory leaks across queries.
         check_wrong_context_alloc(before_snapshot, after);
-
-        /* Check for DSM segments attached but not yet detached by this backend */
-        dsm_tracker_check_leaks();
 
         // Clean up snapshots and diffs to avoid memory leaks in the extension itself
         free_context_tree(before_snapshot);

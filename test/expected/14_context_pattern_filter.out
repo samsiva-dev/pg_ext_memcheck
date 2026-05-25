@@ -33,7 +33,7 @@ INFO:  Memory check session started: pattern='__no_real_ctx_will_match_this__', 
  Memory check session started.
 (1 row)
 
-SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) LIKE '%Scenario executed%' AS ran;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 100
 INFO:  Workload: SELECT 1
@@ -60,7 +60,7 @@ INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
  Memory check session started.
 (1 row)
 
-SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) LIKE '%Scenario executed%' AS ran;
 INFO:  Running memory check scenario: growth_benchmark
 INFO:  Iterations: 100
 INFO:  Workload: SELECT 1
@@ -69,7 +69,7 @@ INFO:  Workload: SELECT 1
  t
 (1 row)
 
-SELECT count(*) >= 0 AS violations_with_empty_pattern FROM ext_memcheck.end();
+SELECT count(*) > 0 AS violations_with_empty_pattern FROM ext_memcheck.end();
 INFO:  Memory check session ended.
  violations_with_empty_pattern 
 -------------------------------
@@ -92,7 +92,7 @@ INFO:  Memory check session started: pattern='(all)', allowed_contexts=2
  Memory check session started.
 (1 row)
 
-SELECT ext_memcheck.run_scenario('wrong_context_probe', 10) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 10) LIKE '%Scenario executed%' AS ran;
 INFO:  Running memory check scenario: wrong_context_probe
 INFO:  Iterations: 10
 INFO:  Workload: SELECT 1
@@ -125,7 +125,7 @@ INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
 (1 row)
 
 SET pg_ext_memcheck.memcheck_mode = 'none';
-SELECT count(*) >= 0 AS ok FROM ext_memcheck.end();
+SELECT count(*) = 0 AS ok FROM ext_memcheck.end();
 INFO:  Memory check session ended.
  ok 
 ----

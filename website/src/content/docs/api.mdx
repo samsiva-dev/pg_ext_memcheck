@@ -109,7 +109,7 @@ SELECT * FROM ext_memcheck.end();
 
 ## ext_memcheck.end()
 
-Closes the current manual test window by setting `pg_ext_memcheck.memcheck_mode` to `'none'` and returns violations belonging to the current session as a result set.
+Closes the current manual test window, resets `pg_ext_memcheck.memcheck_mode` to `'none'`, and returns violations belonging to the current session as a result set.
 
 ```sql
 SELECT * FROM ext_memcheck.end();
@@ -240,6 +240,22 @@ SELECT ext_memcheck.clear_shmem_registry();
 
 ---
 
+## ext_memcheck.probe_check()
+
+Checks whether the `0xDE` sentinel byte planted by `register_shmem_probe()` is still intact after the workload ran. Returns `true` if the sentinel is unmodified, `false` if it was overwritten (indicating a boundary overrun).
+
+```sql
+SELECT ext_memcheck.probe_check('my_ext SomeStruct');
+```
+
+**Parameter:** `seg_name TEXT` — must match exactly the name used in the prior `register_shmem_probe()` call.
+
+**Returns:** `boolean` — `true` if sentinel intact, `false` if overwritten.
+
+**Note:** You do not need to call this manually when using `run_scenario('shmem_sentinel_probe', …)` — the scenario checks all registered probes automatically and writes `shmem_overrun` violations to the ring buffer. `probe_check()` is provided for manual, granular inspection outside of a scenario run.
+
+---
+
 ## ext_memcheck.clear_shmem_registry()
 
 Resets the shmem sentinel probe registry by clearing all registered segment records. Existing sentinel bytes in shared memory are left in place; subsequent `run_scenario('shmem_sentinel_probe', ...)` calls will re-register and rewrite them.
@@ -258,9 +274,9 @@ Set these in `postgresql.conf` or with `SET` at session scope (`PGC_USERSET` —
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | Controls which parts of query execution are instrumented. See below. |
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `none` | Controls which parts of query execution are instrumented. Set to `none` until `begin()` activates a window. See below. |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored. |
-| `pg_ext_memcheck.bloat_min_bytes` | `int` | `16384` | Minimum cumulative growth in bytes for a context to be reported as bloating by `growth_benchmark`. Contexts that grow by less than this amount across checkpoints are silently ignored. |
+| `pg_ext_memcheck.bloat_min_bytes` | `int` | `8192` | Minimum cumulative growth in bytes for a context to be reported as bloating by `growth_benchmark`. Contexts that grow by less than this amount across checkpoints are silently ignored. |
 
 <Aside type="note" title="Monitoring mode vs. targeting">
 `memcheck_mode` controls **which execution phases** are hooked (planner + executor vs. executor-only vs. off). The `ext_context_pattern` and `allowed_contexts` arguments to `begin()` control **which contexts** are reported within those phases. The two are independent — set the GUC once for the session and vary the `begin()` arguments per test.

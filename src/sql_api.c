@@ -342,6 +342,20 @@ memcheck_begin(PG_FUNCTION_ARGS)
         }
     }
 
+    /*
+     * Activate monitoring.  If the user pre-SET memcheck_mode to 'executor'
+     * or 'all', honour that choice.  If the mode is still NONE (the default,
+     * or left over after a previous end()), begin() activates MEMCHECK_ALL so
+     * that calling begin() without any prior SET "just works".
+     *
+     * This makes begin()/end() symmetric: begin opens the window (monitoring
+     * on), end() closes it (monitoring off via MEMCHECK_NONE).  The GUC
+     * continues to function as an explicit override when the user wants a
+     * specific level before calling begin().
+     */
+    if (memcheck_mode == MEMCHECK_NONE)
+        memcheck_mode = MEMCHECK_ALL;
+
     /* Record the window start time before logging so the INFO message itself
      * (which may trigger hook re-entry in ALL mode) is excluded from this
      * session's results. */
@@ -510,9 +524,18 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     if (need_snapshots)
         before_snapshot_tree = snapshot_context_tree(TopMemoryContext);
 
+    /*
+     * Scenario violations are generated outside the executor-hook path, so
+     * active_hook_libs is empty.  Stamp a deterministic marker so every
+     * violation produced by this scenario (analyze_and_log_diff,
+     * check_wrong_context_alloc, analyze_bloat, probe_check_all) carries
+     * meaningful attribution in ext_memcheck.violation_log.source_lib.
+     */
+    snprintf(active_hook_libs, sizeof(active_hook_libs), "(scenario:%s)", scenario_str);
+
     memcheck_in_internal_query = true;
 
-    PG_TRY(); 
+    PG_TRY();
     {
         if (strcmp(scenario_str, "growth_benchmark") == 0) {
             run_growth_benchmark(iterations, workload_str);
@@ -524,12 +547,14 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
             run_wrong_context_probe(iterations, workload_str);
         } else {
             memcheck_in_internal_query = false;
+            active_hook_libs[0] = '\0';
             elog(ERROR, "Unknown scenario: %s", scenario_str);
         }
-    } 
+    }
     PG_CATCH();
     {
         memcheck_in_internal_query = false;
+        active_hook_libs[0] = '\0';
         PG_RE_THROW();
     }
     PG_END_TRY();
@@ -550,6 +575,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
         if (run_wrong_ctx)
             check_wrong_context_alloc(before_snapshot_tree, after_snapshot_tree);
     }
+
+    active_hook_libs[0] = '\0';
 
     PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
 }
@@ -827,6 +854,28 @@ dsm_tracker_handle(PG_FUNCTION_ARGS)
 }
 
 /*
+ * shmem_probe_check -- SQL-callable wrapper for probe_check().
+ *
+ * Returns TRUE if the sentinel byte for seg_name is still 0xDE, FALSE if the
+ * byte has been overwritten or the segment is not registered.
+ */
+PG_FUNCTION_INFO_V1(shmem_probe_check);
+Datum
+shmem_probe_check(PG_FUNCTION_ARGS)
+{
+    text *seg_name_text = PG_GETARG_TEXT_PP(0);
+    char *seg_name;
+    bool  intact;
+
+    if (probe_registry == NULL)
+        PG_RETURN_BOOL(false);
+
+    seg_name = text_to_cstring(seg_name_text);
+    intact   = probe_check(seg_name);
+    PG_RETURN_BOOL(intact);
+}
+
+/*
  * shmem_probe_register -- SQL-callable wrapper for probe_register().
  *
  * Registers a sentinel byte just past the declared end of a named shared-memory
@@ -845,6 +894,8 @@ shmem_probe_register(PG_FUNCTION_ARGS)
     int64    allocated_size = PG_GETARG_INT64(1);
     char    *seg_name;
     char     msg[256];
+    Size     alloc;
+    Size     data_end;
 
     if (allocated_size <= 0)
         ereport(ERROR,
@@ -852,13 +903,39 @@ shmem_probe_register(PG_FUNCTION_ARGS)
                  errmsg("pg_ext_memcheck: allocated_size must be greater than 0")));
 
     seg_name = text_to_cstring(seg_name_text);
+    alloc    = (Size) allocated_size;
 
     /*
-     * data_end = allocated_size: the sentinel occupies the last byte of
-     * the allocation.  probe_register() validates that this lands within the
-     * cache-line-aligned chunk before planting the byte.
+     * The sentinel is planted at data_end = alloc_size (the first byte past
+     * the declared data), relying on alignment padding for headroom.
+     * probe_register() guards data_end < CACHELINEALIGN(alloc_size), so we
+     * must reject sizes that are already cache-line-aligned — those have no
+     * alignment slack and the guard would fire as an error rather than
+     * silently no-op.
+     *
+     * The caller must either:
+     *   a) use a non-CL-aligned size (common for small structs), or
+     *   b) allocate their segment with an extra +1 byte and pass
+     *      declared_data_size + 1 as allocated_size, matching the convention
+     *      used by pg_ext_memcheck's own internal segments.
      */
-    probe_register(seg_name, (Size) allocated_size, (Size) (allocated_size));
+    if (CACHELINEALIGN(alloc) <= alloc)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("pg_ext_memcheck: '%s' allocated_size=%lld is already "
+                        "cache-line-aligned; no alignment slack for a sentinel byte. "
+                        "Re-allocate the segment with one extra byte "
+                        "(RequestAddinShmemSpace(size + 1)) so the sentinel "
+                        "has room past your declared data.",
+                        seg_name, (long long) allocated_size)));
+
+    /*
+     * data_end = alloc_size: sentinel byte at the first byte past the
+     * declared data, inside the cache-line alignment padding.
+     * probe_register() validates that data_end < CACHELINEALIGN(alloc_size).
+     */
+    data_end = alloc;
+    probe_register(seg_name, alloc, data_end);
 
     snprintf(msg, sizeof(msg),
              "Registered shmem probe for segment '%s' (allocated_size=%lld bytes)",

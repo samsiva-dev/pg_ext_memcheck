@@ -40,8 +40,8 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
     <tr><td>MemoryContext leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
     <tr><td>Wrong-context palloc</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
     <tr><td>Shmem boundary overrun</td><td class="partial">±</td><td class="partial">±</td><td class="tick">✓</td></tr>
-    <tr><td>DSM segment leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
-    <tr><td>Use-after-reset bug</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
+    <tr><td>DSM segment leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="partial">± (manual, cross-session only)</td></tr>
+    <tr><td>Use-after-reset bug</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗ (2-phase reset)</td></tr>
     <tr><td>Context growth / bloat</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
     <tr><td>Heap use-after-free</td><td class="tick">✓</td><td class="tick">✓</td><td class="cross">✗</td></tr>
   </tbody>

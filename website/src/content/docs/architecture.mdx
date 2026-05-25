@@ -16,7 +16,7 @@ pg_ext_memcheck is a standard PostgreSQL extension (`.so` loaded via `shared_pre
 │          ┌────────────┼────────────┐                 │
 │          ▼            ▼            ▼                 │
 │  context_walker   shmem_probe   dsm_tracker          │
-│      (Phase 1)    (Phase 2)     (Phase 2)            │
+│      (Phase 1)    (Phase 1)     (Phase 1)            │
 │          │                                           │
 │          ▼                                           │
 │   violation_log.c  (shared ring buffer)              │

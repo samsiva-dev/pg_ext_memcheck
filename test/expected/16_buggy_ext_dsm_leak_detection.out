@@ -1,0 +1,161 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+-- 16_buggy_ext_dsm_leak_detection.sql
+-- Verifies buggy_pg_ext's BUG 3 behaviour and the dsm_tracker API boundaries.
+--
+-- BUG 3 (buggy_pg_ext): Each query's ExecutorStart hook calls dsm_create()
+-- to allocate a 64 KB DSM segment, pins it with dsm_pin_segment() so it
+-- survives backend exit, then loses the handle without ever calling dsm_detach().
+--
+-- Same-session attachment constraint: ext_memcheck.track_dsm_handle() calls
+-- dsm_attach() internally to inspect the segment size.  PostgreSQL refuses to
+-- attach a segment that the current process already holds ("can't attach the
+-- same segment more than once"), so BUG 3's leaked segment cannot be registered
+-- via track_dsm_handle() from within the same session that created it.
+-- Full dsm_leak violation reporting therefore requires either a cross-session
+-- probe or an extension-side auto-registration hook.
+--
+-- What this test verifies:
+--   1. BUG 3 fires: buggy_last_dsm_handle() is non-zero after any query.
+--   2. Same-session re-attach is cleanly rejected (clear error, not a crash).
+--   3. end() with no registered segments returns 0 dsm_leak violations.
+--   4. dsm_tracker_list_segments() returns 0 rows when tracking is empty.
+-- Suppress non-deterministic "resource was not closed: dynamic shared memory
+-- segment XXXXXX" warnings that BUG 3 emits on every statement.
+SET client_min_messages = ERROR;
+-- Load the fixture library for this session (see test 15 for load-order notes).
+LOAD '$libdir/buggy_pg_ext';
+-- Ensure the SQL functions (buggy_last_dsm_handle) are available.
+CREATE EXTENSION IF NOT EXISTS buggy_pg_ext;
+-- Clean slate.
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                0
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+SELECT ext_memcheck.clear_dsm_tracking();
+INFO:  Cleared DSM tracking records in pg_ext_memcheck
+ clear_dsm_tracking 
+--------------------
+ 
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Test 1: BUG 3 fires — buggy_last_dsm_handle() is non-zero after a query
+-- -----------------------------------------------------------------------
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Fire a query so buggy_pg_ext's ExecutorStart creates a 64 KB DSM segment.
+SELECT 1 AS probe;
+ probe 
+-------
+     1
+(1 row)
+
+-- Discard violations from this session window.
+SELECT count(*) AS violations_discarded FROM ext_memcheck.end();
+INFO:  Memory check session ended.
+ violations_discarded 
+----------------------
+                    3
+(1 row)
+
+-- buggy_last_dsm_handle() must be non-zero: BUG 3 created at least one segment.
+SELECT buggy_last_dsm_handle() > 0 AS dsm_handle_nonzero;
+ dsm_handle_nonzero 
+--------------------
+ t
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Test 2: same-session re-attach raises a well-defined error (no crash)
+-- -----------------------------------------------------------------------
+DO $$
+BEGIN
+    PERFORM ext_memcheck.track_dsm_handle(buggy_last_dsm_handle());
+    RAISE EXCEPTION 'Expected an error for same-session re-attach but none raised';
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Expected path: PostgreSQL rejects same-process duplicate attachment.
+        -- Use RAISE WARNING so it appears with client_min_messages = ERROR.
+        RAISE WARNING 'OK: same-session re-attach correctly rejected: %', SQLERRM;
+END;
+$$ LANGUAGE plpgsql;
+-- -----------------------------------------------------------------------
+-- Test 3: end() with no tracked segments returns 0 dsm_leak violations
+-- -----------------------------------------------------------------------
+SELECT ext_memcheck.clear_dsm_tracking();
+INFO:  Cleared DSM tracking records in pg_ext_memcheck
+ clear_dsm_tracking 
+--------------------
+ 
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Leak another segment (no tracking this time).
+SELECT 1 AS probe;
+ probe 
+-------
+     1
+(1 row)
+
+SELECT count(*) AS dsm_leaks_without_tracking
+FROM ext_memcheck.end()
+WHERE check_type = 'dsm_leak';
+INFO:  Memory check session ended.
+ dsm_leaks_without_tracking 
+----------------------------
+                          0
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Test 4: dsm_tracking() reflects empty tracking state
+-- -----------------------------------------------------------------------
+SELECT ext_memcheck.clear_dsm_tracking();
+INFO:  Cleared DSM tracking records in pg_ext_memcheck
+ clear_dsm_tracking 
+--------------------
+ 
+(1 row)
+
+SELECT count(*) AS tracked_segments
+FROM ext_memcheck.dsm_tracking();
+ tracked_segments 
+------------------
+                0
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Cleanup
+-- -----------------------------------------------------------------------
+DELETE FROM ext_memcheck.violation_log;
+SELECT ext_memcheck.clear_dsm_tracking();
+INFO:  Cleared DSM tracking records in pg_ext_memcheck
+ clear_dsm_tracking 
+--------------------
+ 
+(1 row)
+
+SET pg_ext_memcheck.memcheck_mode = 'none';

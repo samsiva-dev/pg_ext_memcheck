@@ -37,28 +37,39 @@
  * probe_register
  *   seg_name   : name the segment is registered under in ShmemIndex
  *   alloc_size : exact size the owner allocated it with (so the lookup matches)
- *   data_end   : offset to plant the sentinel.
+ *   data_end   : offset to plant the sentinel (must be < CACHELINEALIGN(alloc_size)).
  *                own segment padded with +1 -> data_end = alloc_size - 1 (reserved byte)
- *                foreign segment (no cooperation) -> data_end = alloc_size (uses align slack)
+ *                foreign segment via SQL API -> data_end = alloc_size (uses align slack;
+ *                  requires CACHELINEALIGN(alloc_size) > alloc_size, i.e. the size must
+ *                  not already be cache-line-aligned — the SQL wrapper enforces this)
  */
 void
 probe_register(const char *seg_name, Size alloc_size, Size data_end)
 {
     void *base_ptr;
     bool  found;
-    Size  chunk = CACHELINEALIGN(alloc_size);   /* bytes the allocator actually reserved */
+    Size  chunk = CACHELINEALIGN(alloc_size);   /* upper bound on bytes the allocator reserved */
     int   slot;
 
     if (probe_registry == NULL)
         return;
 
-    /* The sentinel must land inside our own chunk, or we'd corrupt the neighbour. */
+    /*
+     * The sentinel must land strictly inside the cache-line-aligned chunk.
+     * Using CACHELINEALIGN as the upper bound is conservative: PostgreSQL's
+     * ShmemAlloc uses MAXALIGN (typically 8 bytes), so any data_end value
+     * that passes this guard is also within the allocator's actual reservation
+     * provided data_end < MAXALIGN(alloc_size) — which the SQL wrapper
+     * guarantees by refusing non-slack sizes.
+     */
     if (data_end >= chunk)
     {
-        elog(WARNING,
-             "pg_ext_memcheck: '%s' has no slack for a sentinel (data_end=%zu, chunk=%zu); not probing",
-             seg_name, data_end, chunk);
-        return;
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("pg_ext_memcheck: '%s' has no slack for a sentinel "
+                        "(data_end=%zu, chunk=%zu); allocate the segment with "
+                        "an extra byte so the sentinel byte has room",
+                        seg_name, data_end, chunk)));
     }
 
     /*

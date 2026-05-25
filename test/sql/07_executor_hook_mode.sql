@@ -19,7 +19,7 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 SELECT 1 AS probe;
 SELECT 2 AS probe;
 -- No violations should have been added to the ring buffer
-SELECT count(*) >= 0 AS viol_in_none_mode FROM ext_memcheck.end();
+SELECT count(*) = 0 AS viol_in_none_mode FROM ext_memcheck.end();
 
 -- In EXECUTOR mode the hook must be active for executor statements
 SET pg_ext_memcheck.memcheck_mode = 'executor';

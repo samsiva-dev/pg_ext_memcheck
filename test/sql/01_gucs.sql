@@ -12,7 +12,7 @@
 
 SET client_min_messages = WARNING;
 
--- Default memcheck_mode should be 'all'
+-- Default memcheck_mode should be 'none' (monitoring off until begin() is called)
 SHOW pg_ext_memcheck.memcheck_mode;
 
 -- Default min_leak_bytes should be 8192

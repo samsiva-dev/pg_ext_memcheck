@@ -15,8 +15,8 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 | MemoryContext leak | ✗ | ✗ | ✓ |
 | Wrong-context palloc | ✗ | ✗ | ✓ |
 | Shmem boundary overrun | ± | ± | ✓ |
-| DSM segment leak | ✗ | ✗ | ✓ |
-| Use-after-reset bug | ✗ | ✗ | ✓ |
+| DSM segment leak | ✗ | ✗ | ± (manual, cross-session only) |
+| Use-after-reset bug | ✗ | ✗ | ✗ *(Phase 2)* |
 | Context growth / bloat | ✗ | ✗ | ✓ |
 | Heap use-after-free | ✓ | ✓ | ✗ |
 
@@ -67,8 +67,12 @@ CREATE EXTENSION pg_ext_memcheck;
 ## Quickstart
 
 ```sql
--- Start a check window in executor mode
-SELECT ext_memcheck.begin('executor');
+-- Set the monitoring mode (controls which execution phases are instrumented)
+SET pg_ext_memcheck.memcheck_mode = 'executor';
+
+-- Start a check window; pass a SQL LIKE pattern to scope to your extension's contexts
+-- (empty string = monitor all contexts)
+SELECT ext_memcheck.begin('MyExtCtx%');
 
 -- Call the function you want to inspect
 SELECT your_extension.some_function('input');
@@ -153,9 +157,9 @@ Set in `postgresql.conf` or with `SET` at session scope (no restart required).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. |
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `none` | `all` / `executor` / `none` — controls which execution phases are hooked. Set to `none` until `begin()` activates a window. |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (bytes) is silently ignored by the leak detector. |
-| `pg_ext_memcheck.bloat_min_bytes` | `int` | `16384` | Minimum cumulative growth (bytes) for a context to be reported as bloating by `growth_benchmark`. |
+| `pg_ext_memcheck.bloat_min_bytes` | `int` | `8192` | Minimum cumulative growth (bytes) for a context to be reported as bloating by `growth_benchmark`. |
 
 ```sql
 -- Check both planner and executor phases
@@ -174,7 +178,7 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 
 | Function | Returns | Description |
 |---|---|---|
-| `ext_memcheck.begin(target_mode TEXT)` | `text` | Opens a test window, sets `memcheck_mode`, and records the session start timestamp. |
+| `ext_memcheck.begin(ext_context_pattern TEXT DEFAULT '', options JSONB DEFAULT NULL)` | `text` | Opens a test window scoped to contexts whose names match `ext_context_pattern` (SQL `LIKE` syntax; empty string = all). The monitoring mode (`all`/`executor`/`none`) is set separately via the GUC and is not changed by `begin()`. |
 | `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts, source_lib)` | Closes the window and returns violations scoped to this session (current `backend_pid` + `ts >= begin()` time). Matched slots are cleared from the ring atomically — repeated calls return 0 rows. Does not flush to `violation_log`. |
 | `ext_memcheck.flush_violations()` | `int` | Drains the **entire** ring buffer across all backends into `violation_log`; returns count flushed. Clears all ring slots. |
 | `ext_memcheck.run_scenario(scenario_name TEXT, iterations INT, workload TEXT)` | `text` | Runs a named stress scenario with a custom workload query. |
@@ -183,6 +187,7 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 | `ext_memcheck.dsm_tracking()` | `TABLE(segid, backend_pid, attach_at, size_bytes, detached)` | Returns all currently tracked DSM segments. |
 | `ext_memcheck.clear_dsm_tracking()` | `void` | Resets the DSM tracking table between test runs. |
 | `ext_memcheck.register_shmem_probe(seg_name TEXT, allocated_size BIGINT)` | `text` | Registers a shared memory segment for sentinel probing. `allocated_size` must match the exact size used in `ShmemInitStruct`. |
+| `ext_memcheck.probe_check(seg_name TEXT)` | `boolean` | Checks whether the `0xDE` sentinel byte planted by `register_shmem_probe()` is still intact. Returns `true` if unmodified, `false` if overwritten. |
 | `ext_memcheck.clear_shmem_registry()` | `void` | Resets the shmem sentinel probe registry between test runs. |
 
 The ring buffer is capped at 2048 entries (oldest-first eviction when full). Call `flush_violations()` regularly to avoid data loss.
@@ -208,12 +213,13 @@ SELECT * FROM ext_memcheck.violation_log;
 Run the growth benchmark to see severity escalate over 1000 iterations:
 
 ```sql
-SELECT ext_memcheck.begin('all');
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
 SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT count(*) FROM pg_class;');
 SELECT * FROM ext_memcheck.end();
 ```
 
-After 1000 iterations the `TopMemoryContext` bloat (~8 MB) escalates to `ERROR` (superlinear growth bumps it further if the rate accelerates); the wrong-context allocation fires as `WARNING`; shorter-lived contexts that grow by less than 16 KiB are silently filtered by `bloat_min_bytes`. See the [full walkthrough](https://pg-ext-memcheck.vercel.app/testing-buggy-extensions/) on the docs site.
+After 1000 iterations the `TopMemoryContext` bloat (~8 MB) escalates to `ERROR` (superlinear growth bumps it further if the rate accelerates); the wrong-context allocation fires as `WARNING`; shorter-lived contexts that grow by less than 8 KiB are silently filtered by `bloat_min_bytes`. See the [full walkthrough](https://pg-ext-memcheck.vercel.app/testing-buggy-extensions/) on the docs site.
 
 ---
 

@@ -29,19 +29,26 @@ dsm_tracker_check_leaks(void)
     if (dsm_tracker_state == NULL)
         return; /* tracker not initialized, should not happen but be defensive */
 
-    // Check for any segments that are still attached and were attached by the current backend. 
-    // Log a warning for each potential leak.
-    LWLockAcquire(&dsm_tracker_state->lock, LW_SHARED);
+    /*
+     * Check for any segments that are still attached and were attached by the
+     * current backend.  The `reported` flag prevents duplicate violations when
+     * check_leaks() is called more than once for the same session (e.g. once at
+     * end() and once at proc_exit).  We take an exclusive lock because we may
+     * set the reported flag.
+     */
+    LWLockAcquire(&dsm_tracker_state->lock, LW_EXCLUSIVE);
     for (i = 0; i < dsm_tracker_state->count; i++)
     {
         DsmSegmentRecord *record = &dsm_tracker_state->segments[i];
-        if (!record->detached && record->backend_pid == MyProcPid && record->handle != 0)
+        if (!record->detached && !record->reported &&
+            record->backend_pid == MyProcPid && record->handle != 0)
         {
             char detail_msg[256];
             snprintf(detail_msg, sizeof(detail_msg),
-                     "DSM segment with handle %u attached by backend PID %d at %s is still attached after query completion. Size: %zu bytes.",
+                     "DSM segment with handle %u attached by backend PID %d at %s is still attached at session end. Size: %zu bytes.",
                      record->handle, record->backend_pid, timestamptz_to_str(record->attached_at), record->size_bytes);
             violation_log_write("dsm_leak", "WARNING", detail_msg, active_hook_libs);
+            record->reported = true;
         }
     }
     LWLockRelease(&dsm_tracker_state->lock);
@@ -75,6 +82,7 @@ dsm_tracker_record_handle_observe(dsm_handle handle, Size size_bytes)
         record->attached_at = GetCurrentTimestamp();
         record->size_bytes  = size_bytes;
         record->detached    = false;
+        record->reported    = false;
     }
     LWLockRelease(&dsm_tracker_state->lock);
 }
