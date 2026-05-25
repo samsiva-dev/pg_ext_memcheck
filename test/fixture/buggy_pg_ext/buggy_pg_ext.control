@@ -1,0 +1,6 @@
+# buggy_pg_ext extension metadata
+
+comment         = 'Intentionally buggy PostgreSQL extension – memory-leak test fixture for pg_ext_memcheck'
+default_version = '1.0'
+module_pathname = '$libdir/buggy_pg_ext'
+relocatable     = true

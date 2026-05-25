@@ -21,7 +21,7 @@
 #define MEMCHECK_MAX_ALLOWED_CTXS 16
 
 /*
- * Session-scoped targeting state — set by ext_memcheck.begin() and cleared by
+ * Session-scoped/Test-window targeting state — set by ext_memcheck.begin() and cleared by
  * ext_memcheck.end().  These are consulted by analyze_and_log_diff() and
  * check_wrong_context_alloc() to scope detection to the target extension.
  *
@@ -56,9 +56,12 @@ extern void memcheck_executor_start(QueryDesc *queryDesc, int eflags);
 extern void memcheck_executor_end(QueryDesc *queryDesc);
 extern PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string, int cursorOptions, ParamListInfo boundParams);
 
+// Helper functions for diff analysis and wrong context allocation checks, called from memcheck_executor_end
+
 void analyze_and_log_diff(CtxDiff *diff);
 void check_wrong_context_alloc(CtxTree *before, CtxTree *after);
 
+// Global variable to track the active hook libraries for logging purposes, set by resolve_active_hook_libs().
 extern char active_hook_libs[128];
 
 #endif /* MEMCHECK_HOOKS_H */

@@ -7,11 +7,10 @@
 -- See LICENSE for details.
 -- -------------------------------------------------------------------------
 -- 02_session_lifecycle.sql
--- Test begin/end session lifecycle: begin returns text, end returns empty set when
--- no monitoring has occurred in NONE mode.
+-- Test begin/end session lifecycle: begin() activates monitoring (defaults to ALL
+-- mode if none was configured), end() returns the session's violations and forces
+-- mode back to NONE so the next begin() starts a clean window.
 SET client_min_messages = WARNING;
--- Put extension in NONE mode so no hook fires and ring buffer stays clean
-SET pg_ext_memcheck.memcheck_mode = 'none';
 -- Flush any leftover violations from previous tests
 SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
  cleaned 
@@ -19,7 +18,8 @@ SELECT ext_memcheck.flush_violations() >= 0 AS cleaned;
  t
 (1 row)
 
--- Begin a session with no pattern (match all) while mode is 'none'
+-- begin() with mode=NONE (the default) activates MEMCHECK_ALL automatically.
+-- No test workload between begin/end, so violation count must be 0.
 SELECT ext_memcheck.begin('');
 INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
              begin             
@@ -27,7 +27,6 @@ INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
  Memory check session started.
 (1 row)
 
--- End the session - should return 0 rows because no violations were generated
 SELECT count(*) AS violation_count FROM ext_memcheck.end();
 INFO:  Memory check session ended.
  violation_count 
@@ -35,7 +34,14 @@ INFO:  Memory check session ended.
                0
 (1 row)
 
--- Begin a session in 'executor' mode
+-- Confirm memcheck_mode is 'none' after end() closes the window
+SHOW pg_ext_memcheck.memcheck_mode;
+ pg_ext_memcheck.memcheck_mode 
+-------------------------------
+ none
+(1 row)
+
+-- begin() with a pre-SET mode honours the caller's choice.
 SET pg_ext_memcheck.memcheck_mode = 'executor';
 SELECT ext_memcheck.begin('');
 INFO:  Memory check session started: pattern='(all)', allowed_contexts=0

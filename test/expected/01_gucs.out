@@ -9,11 +9,11 @@
 -- 01_gucs.sql
 -- Verify GUC defaults and accept all valid values without error.
 SET client_min_messages = WARNING;
--- Default memcheck_mode should be 'all'
+-- Default memcheck_mode should be 'none' (monitoring off until begin() is called)
 SHOW pg_ext_memcheck.memcheck_mode;
  pg_ext_memcheck.memcheck_mode 
 -------------------------------
- all
+ none
 (1 row)
 
 -- Default min_leak_bytes should be 8192

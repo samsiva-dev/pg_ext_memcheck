@@ -1,0 +1,141 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+-- 15_buggy_ext_wrong_ctx_detection.sql
+-- Positive-detection test: proves that pg_ext_memcheck actually catches the
+-- wrong_ctx_alloc violation produced by buggy_pg_ext's BUG 2.
+--
+-- BUG 2 (buggy_pg_ext): Each query's ExecutorStart hook allocates 8192 bytes
+-- directly into TopMemoryContext without ever freeing them.  Because
+-- pg_ext_memcheck is listed AFTER buggy_pg_ext in shared_preload_libraries it
+-- becomes the outermost hook wrapper, so its before-snapshot (taken in the
+-- planner hook in ALL mode) is captured before buggy_pg_ext's allocations run.
+-- The after-snapshot (taken in ExecutorEnd) therefore shows TopMemoryContext
+-- having grown — triggering a wrong_ctx_alloc violation.
+--
+-- Expected result: at least one wrong_ctx_alloc row whose detail mentions
+-- TopMemoryContext AND whose source_lib contains 'buggy_pg_ext'.
+-- Set client_min_messages to ERROR to suppress the non-deterministic
+-- "resource was not closed: dynamic shared memory segment XXXXXX" warnings
+-- that buggy_pg_ext's DSM leak (BUG 3) generates on every statement.  INFO
+-- messages from pg_ext_memcheck bypass client_min_messages and still appear.
+SET client_min_messages = ERROR;
+-- Load the fixture library so its planner + ExecutorStart hooks are installed
+-- for this session.  Using LOAD rather than shared_preload_libraries keeps
+-- tests 00-14 completely unaffected: buggy_pg_ext's hooks only run in the
+-- sessions that explicitly load it.
+--
+-- Load order: pg_ext_memcheck was already installed via shared_preload_libraries
+-- so its _PG_init ran first.  LOAD now calls buggy_pg_ext's _PG_init, which
+-- chains its hooks ON TOP of pg_ext_memcheck's:
+--   planner_hook      -> buggy_planner -> mc_planner -> standard_planner
+--   ExecutorStart_hook -> buggy_exec   -> mc_exec_start -> standard_ExecutorStart
+-- mc_planner takes the before-snapshot BEFORE it calls its prev chain, so
+-- buggy_pg_ext's ExecutorStart allocation (TopMemoryContext +8192 B per query)
+-- happens AFTER the before-snapshot and is visible in the ExecutorEnd diff.
+LOAD '$libdir/buggy_pg_ext';
+-- Create the extension so buggy_last_dsm_handle() is callable from SQL.
+CREATE EXTENSION IF NOT EXISTS buggy_pg_ext;
+-- Clean slate.
+SELECT ext_memcheck.flush_violations();
+ flush_violations 
+------------------
+                0
+(1 row)
+
+DELETE FROM ext_memcheck.violation_log;
+-- -----------------------------------------------------------------------
+-- Test 1: wrong_ctx_alloc violation is produced for TopMemoryContext
+--
+-- We use ALL mode so the before-snapshot is taken in the planner hook
+-- (BEFORE buggy_pg_ext's ExecutorStart allocates into TopMemoryContext),
+-- which means the TopMemoryContext growth is visible in the ExecutorEnd diff.
+-- -----------------------------------------------------------------------
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SET pg_ext_memcheck.min_leak_bytes = '0';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Fire two plain queries so buggy_pg_ext's ExecutorStart runs twice,
+-- each time allocating 8192 bytes into TopMemoryContext.
+SELECT 1 AS probe;
+ probe 
+-------
+     1
+(1 row)
+
+SELECT 2 AS probe;
+ probe 
+-------
+     2
+(1 row)
+
+-- All three assertions are evaluated in a single end() call:
+--   detected_wrong_ctx_alloc : at least one wrong_ctx_alloc was logged
+--   detail_mentions_topctx   : the violation names TopMemoryContext
+--   attributed_to_buggy_ext  : source_lib points to buggy_pg_ext
+SELECT
+    count(*) >= 1                                              AS detected_wrong_ctx_alloc,
+    bool_or(detail     LIKE '%TopMemoryContext%')             AS detail_mentions_topctx,
+    bool_or(source_lib LIKE '%buggy_pg_ext%')                 AS attributed_to_buggy_ext
+FROM ext_memcheck.end()
+WHERE check_type = 'wrong_ctx_alloc';
+INFO:  Memory check session ended.
+ detected_wrong_ctx_alloc | detail_mentions_topctx | attributed_to_buggy_ext 
+--------------------------+------------------------+-------------------------
+ t                        | t                      | t
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Test 2: when TopMemoryContext is allowlisted the violations vanish —
+--         proving the pattern is the filter, not an accident.
+-- -----------------------------------------------------------------------
+DELETE FROM ext_memcheck.violation_log;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin(
+    '',
+    '{"allowed_contexts": ["TopMemoryContext"]}'
+);
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=1
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT 1 AS probe;
+ probe 
+-------
+     1
+(1 row)
+
+SELECT 2 AS probe;
+ probe 
+-------
+     2
+(1 row)
+
+SELECT count(*) AS wrong_ctx_when_allowlisted
+FROM ext_memcheck.end()
+WHERE check_type = 'wrong_ctx_alloc'
+  AND detail LIKE '%TopMemoryContext%';
+INFO:  Memory check session ended.
+ wrong_ctx_when_allowlisted 
+----------------------------
+                          0
+(1 row)
+
+-- -----------------------------------------------------------------------
+-- Cleanup
+-- -----------------------------------------------------------------------
+DELETE FROM ext_memcheck.violation_log;
+SET pg_ext_memcheck.memcheck_mode = 'none';
+RESET pg_ext_memcheck.min_leak_bytes;

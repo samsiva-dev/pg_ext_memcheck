@@ -27,7 +27,7 @@
 #include "include/gucs.h"
 
 // GUC variable definitions
-MemCheckMode memcheck_mode      = MEMCHECK_ALL;
+MemCheckMode memcheck_mode      = MEMCHECK_NONE;
 int          memcheck_min_leak_bytes = 8192; /* 8 KiB default */
 int          memcheck_bloat_min_bytes = 8192; /* 8 KiB default */
 
@@ -45,9 +45,9 @@ DefineCustomGUCs(void)
     // Define GUC for memory checking mode
     DefineCustomEnumVariable("pg_ext_memcheck.memcheck_mode",
                              "Sets the memory checking mode for the pg_ext_memcheck extension.",
-                             "Available modes: MEMCHECK_ALL, MEMCHECK_EXECUTOR, MEMCHECK_NONE.",
+                             "Available modes: none (default, safe for production), executor, all.",
                              (int *) &memcheck_mode,
-                             MEMCHECK_ALL,           // default value
+                             MEMCHECK_NONE,          // default value: off until begin() activates
                              memcheck_mode_options,  // enum options
                              PGC_USERSET,            // context
                              0,            // flags

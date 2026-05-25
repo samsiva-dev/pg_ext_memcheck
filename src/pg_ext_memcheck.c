@@ -108,6 +108,19 @@ install_hooks(void)
     shmem_startup_hook = memcheck_shmem_startup;
 }
 
+/*
+ * SENTINEL_TEST_SEG_SIZE must NOT be CACHELINEALIGN-aligned (i.e. not a
+ * multiple of the cache-line size, typically 64).  This guarantees that
+ * CACHELINEALIGN(SENTINEL_TEST_SEG_SIZE) > SENTINEL_TEST_SEG_SIZE so the
+ * sentinel byte at offset SENTINEL_TEST_SEG_SIZE lands inside the alignment
+ * padding rather than past the allocator's reserved range.
+ *
+ * 10 bytes: CACHELINEALIGN(10)=64 on all common platforms, giving 54 bytes
+ * of slack.  MAXALIGN(10)=16 on 64-bit, so byte 10 is in MAXALIGN padding.
+ */
+#define SENTINEL_TEST_SEG_NAME "pg_ext_memcheck SentinelTest"
+#define SENTINEL_TEST_SEG_SIZE 10
+
 static void
 memcheck_shmem_request(void)
 {
@@ -117,6 +130,8 @@ memcheck_shmem_request(void)
     RequestAddinShmemSpace(sizeof(ViolationLog) + 1);
     RequestAddinShmemSpace(sizeof(DsmTrackerState) + 1);
     RequestAddinShmemSpace(sizeof(ProbeRegistry));
+    /* Small test segment for register_shmem_probe() integration tests. */
+    RequestAddinShmemSpace(SENTINEL_TEST_SEG_SIZE);
 }
 
 static void memcheck_shmem_startup(void)
@@ -171,5 +186,18 @@ static void memcheck_shmem_startup(void)
     if (!found) {
         memset(probe_registry, 0, sizeof(ProbeRegistry));
         LWLockInitialize(&probe_registry->lock, shmem_probe_tranche_id);
+    }
+
+    /*
+     * Allocate the dedicated sentinel-test segment.  No struct needed; we
+     * only reference it by name through probe_register() / probe_check().
+     * The allocation must survive (not be optimised away), so we use the
+     * returned pointer in a volatile write that keeps the call live.
+     */
+    {
+        void *sentinel_test_ptr =
+            ShmemInitStruct(SENTINEL_TEST_SEG_NAME, SENTINEL_TEST_SEG_SIZE, &found);
+        if (!found)
+            memset(sentinel_test_ptr, 0, SENTINEL_TEST_SEG_SIZE);
     }
 }

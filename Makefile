@@ -34,7 +34,10 @@ REGRESS = \
 	10_min_leak_bytes_threshold \
 	11_violation_log_schema \
 	12_idempotent_install \
-	13_shmem_sentinel_probe
+	13_shmem_sentinel_probe \
+	14_context_pattern_filter \
+	15_buggy_ext_wrong_ctx_detection \
+	16_buggy_ext_dsm_leak_detection 
 
 REGRESS_OPTS = --inputdir=test --outputdir=test
 

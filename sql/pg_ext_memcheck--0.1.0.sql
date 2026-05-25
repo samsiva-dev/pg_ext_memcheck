@@ -11,7 +11,11 @@ CREATE SCHEMA IF NOT EXISTS ext_memcheck;
 
 
 /* 
-    Table to store violation logs 
+    Table to store violation logs containing details about memory issues detected by the extension.
+    check_type: type of violation (e.g., "context_leak", "wrong_ctx_alloc")
+    severity: severity level of the violation (e.g., "ERROR", "WARNING", "INFO", "OK")
+    detail: detailed message about the violation, including context names and sizes for context_leak, or source library for wrong_ctx_alloc
+    source_lib: the shared library (extension) that was active when the violation was detected, for easier debugging and filtering of results.
 */
 CREATE TABLE IF NOT EXISTS ext_memcheck.violation_log (
     id SERIAL PRIMARY KEY,
@@ -36,9 +40,13 @@ LANGUAGE C STRICT;
 /*
     SQL API for memcheck
 
-    ext_memcheck.begin - Start a test session targeting an extension by context name pattern
+    ext_memcheck.begin - Start a test session targeting an extension by context name pattern with optional configuration parameters
+     - ext_context_pattern: a SQL LIKE pattern to filter context names for violation reporting (e.g., '%MyExtension%')
+     - options: JSONB object for additional configuration (e.g., {"allowed_contexts": ["TopMemoryContext"]})
+     - Returns: a status message
     ext_memcheck.end - End the current test session and trigger violation analysis
      - Returns: check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ
+     - Resets the session state for the next test
     ext_memcheck.run_scenario - Run a predefined test scenario by name (e.g. 'context_reset_storm', 'tx_abort_loop', etc.)
 */
 
@@ -64,6 +72,7 @@ RETURNS TEXT
 AS 'pg_ext_memcheck', 'memcheck_run_scenario'
 LANGUAGE C STRICT;
 
+-- Utility function to clear the violation log table
 CREATE OR REPLACE FUNCTION ext_memcheck.clear_violations()
 RETURNS void
 LANGUAGE SQL
@@ -71,7 +80,8 @@ AS $$
 DELETE FROM ext_memcheck.violation_log;
 $$;
 
--- Scenarios view
+-- Available Scenarios view for users to query and know what scenarios 
+-- they can run with ext_memcheck.run_scenario()
 CREATE VIEW ext_memcheck.scenarios AS
 SELECT * FROM (
     VALUES
@@ -112,6 +122,16 @@ CREATE OR REPLACE FUNCTION ext_memcheck.register_shmem_probe(
     allocated_size BIGINT
 ) RETURNS TEXT
 AS 'pg_ext_memcheck', 'shmem_probe_register'
+LANGUAGE C STRICT;
+
+-- Check whether a previously registered sentinel byte is still intact.
+-- Returns TRUE if the 0xDE sentinel at data_end is unchanged, FALSE otherwise.
+-- Useful after register_shmem_probe() to confirm the sentinel was actually planted.
+-- seg_name must match exactly the name used in ShmemInitStruct for the target segment.
+CREATE OR REPLACE FUNCTION ext_memcheck.probe_check(
+    seg_name TEXT
+) RETURNS BOOLEAN
+AS 'pg_ext_memcheck', 'shmem_probe_check'
 LANGUAGE C STRICT;
 
 -- Utility function to clear the shared memory registry

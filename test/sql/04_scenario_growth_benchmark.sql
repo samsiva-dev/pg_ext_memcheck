@@ -17,10 +17,10 @@ SELECT ext_memcheck.flush_violations();
 DELETE FROM ext_memcheck.violation_log;
 
 -- Minimum iteration count (1) must work
-SELECT ext_memcheck.run_scenario('growth_benchmark', 1) IS NOT NULL AS ok;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 1) LIKE '%Scenario executed%' AS ok;
 
 -- Standard run with 10 iterations
-SELECT ext_memcheck.run_scenario('growth_benchmark', 10) IS NOT NULL AS ok;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 10) LIKE '%Scenario executed%' AS ok;
 
 -- Return message must mention 'Scenario executed'
 SELECT ext_memcheck.run_scenario('growth_benchmark', 1) LIKE '%Scenario executed%' AS msg_ok;

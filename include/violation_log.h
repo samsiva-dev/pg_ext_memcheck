@@ -19,13 +19,14 @@
 // Older entries will be overwritten when the buffer is full.
 #define MEMCHECK_MAX_VIOLATIONS 2048
 
+// Lock tranche ID for the violation log's LWLock; initialized in shmem_startup_hook.
 extern int violation_log_tranche_id;
 
 
 // ViolationEntry represents a single memory violation detected by the extension.
 typedef struct ViolationEntry {
-    TimestampTz   ts;
-    int           backend_pid;
+    TimestampTz   ts;                  // Timestamp of when the violation was logged
+    int           backend_pid;         // PID of the backend that caused the violation
     char          check_type[32];      // e.g., "context_leak", "wrong_ctx_alloc", etc.
     char          severity[16];        // e.g., "ERROR", "WARNING", "INFO", "OK"
     char          detail[256];         // Detailed message about the violation

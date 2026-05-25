@@ -62,8 +62,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+FIXTURE_DIR="$SCRIPT_DIR/fixture/buggy_pg_ext"
+
 # ---------------------------------------------------------------------------
-# Step 1 — Build and install the extension against PG 17
+# Step 1 — Build and install pg_ext_memcheck
 # ---------------------------------------------------------------------------
 echo "=== Building pg_ext_memcheck against $("$PG_CONFIG" --version) ==="
 cd "$ROOT_DIR"
@@ -72,14 +74,27 @@ make all PG_CONFIG="$PG_CONFIG" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/d
 echo "=== Installing pg_ext_memcheck to $PG_LIBDIR ==="
 
 if [ "$ENVIRONMENT" = "CI" ]; then
-    # In CI, we want to install to the system PostgreSQL so that pg_regress can find the extension
     echo "CI environment detected; installing to system PostgreSQL directories"
     sudo make install PG_CONFIG="$PG_CONFIG"
 else
-    # In local/dev environments, install to the current user's PostgreSQL directories (which may require PG_CONFIG override)
     echo "Local environment detected; installing to user PostgreSQL directories"
     make install PG_CONFIG="$PG_CONFIG"
 fi
+
+# ---------------------------------------------------------------------------
+# Step 1b — Build and install buggy_pg_ext fixture
+# ---------------------------------------------------------------------------
+echo "=== Building buggy_pg_ext fixture ==="
+cd "$FIXTURE_DIR"
+make all PG_CONFIG="$PG_CONFIG" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+echo "=== Installing buggy_pg_ext fixture to $PG_LIBDIR ==="
+if [ "$ENVIRONMENT" = "CI" ]; then
+    sudo make install PG_CONFIG="$PG_CONFIG"
+else
+    make install PG_CONFIG="$PG_CONFIG"
+fi
+cd "$ROOT_DIR"
 
 # ---------------------------------------------------------------------------
 # Step 2 — initdb a fresh cluster
@@ -151,7 +166,9 @@ cd "$ROOT_DIR"
     11_violation_log_schema \
     12_idempotent_install \
     13_shmem_sentinel_probe \
-    14_context_pattern_filter
+    14_context_pattern_filter \
+    15_buggy_ext_wrong_ctx_detection \
+    16_buggy_ext_dsm_leak_detection
 
 echo ""
 echo "=== All regression tests passed ==="

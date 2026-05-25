@@ -26,7 +26,7 @@ SET pg_ext_memcheck.min_leak_bytes = '0';
 SET pg_ext_memcheck.bloat_min_bytes = '0';
 
 SELECT ext_memcheck.begin('__no_real_ctx_will_match_this__');
-SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) LIKE '%Scenario executed%' AS ran;
 SELECT count(*) AS violations_with_unmatched_pattern FROM ext_memcheck.end();
 
 -- ----------------------------------------------------------------------------
@@ -34,8 +34,8 @@ SELECT count(*) AS violations_with_unmatched_pattern FROM ext_memcheck.end();
 --    >= 0 violations (the hook fires and may record something).
 -- ----------------------------------------------------------------------------
 SELECT ext_memcheck.begin('');
-SELECT ext_memcheck.run_scenario('growth_benchmark', 100) IS NOT NULL AS ran;
-SELECT count(*) >= 0 AS violations_with_empty_pattern FROM ext_memcheck.end();
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100) LIKE '%Scenario executed%' AS ran;
+SELECT count(*) > 0 AS violations_with_empty_pattern FROM ext_memcheck.end();
 
 -- ----------------------------------------------------------------------------
 -- 3. allowlist suppresses wrong_ctx_alloc for named contexts: wrong_context_probe
@@ -47,7 +47,7 @@ SELECT ext_memcheck.begin(
     '',
     '{"allowed_contexts": ["TopMemoryContext", "CacheMemoryContext"]}'
 );
-SELECT ext_memcheck.run_scenario('wrong_context_probe', 10) IS NOT NULL AS ran;
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 10) LIKE '%Scenario executed%' AS ran;
 SELECT count(*) AS wrong_ctx_for_allowlisted
 FROM ext_memcheck.end()
 WHERE check_type = 'wrong_ctx_alloc'
@@ -61,7 +61,7 @@ SELECT ext_memcheck.begin(
     '{"track_shmem": false, "track_dsm": false}'
 ) LIKE 'Memory check%' AS null_pattern_accepted;
 SET pg_ext_memcheck.memcheck_mode = 'none';
-SELECT count(*) >= 0 AS ok FROM ext_memcheck.end();
+SELECT count(*) = 0 AS ok FROM ext_memcheck.end();
 
 -- ----------------------------------------------------------------------------
 -- 5. Error: pattern exceeds NAMEDATALEN (64 chars) must raise an error.
