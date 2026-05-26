@@ -6,7 +6,7 @@ description: The built-in stress scenario catalog for pg_ext_memcheck.
 import { Aside } from '@astrojs/starlight/components';
 
 <Aside type="note" title="Availability">
-  `growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are Phase 1 scenarios available now. `wrong_context_probe` is a Phase 2 scenario that is now implemented and available. The remaining Phase 2 scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are not yet implemented.
+  All four scenarios — `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` — ship in 0.1.0 Beta. The remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are deferred to a later release and are not yet implemented.
 </Aside>
 
 Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`. Refer to the [API documentation](/api/#ext_memcheckrun_scenario) for usage details.
@@ -15,7 +15,7 @@ Stress scenarios are parameterized test programs that subject an extension funct
 
 ## growth_benchmark
 
-Invokes the target SQL a configurable number of iterations and tracks the per-`MemoryContext` used bytes at **log-spaced checkpoints** (iteration 1, 10, 100, …, up to a maximum of 8 checkpoints). Contexts that grow monotonically across at least two checkpoints and exceed `pg_ext_memcheck.bloat_min_bytes` (default 16 KiB) are reported as `ctx_bloat` violations.
+Invokes the target SQL a configurable number of iterations and tracks the per-`MemoryContext` used bytes at **log-spaced checkpoints** (iteration 1, 10, 100, …, up to a maximum of 8 checkpoints). Contexts that grow monotonically across at least two checkpoints and exceed `pg_ext_memcheck.bloat_min_bytes` (default 8 KiB) are reported as `ctx_bloat` violations.
 
 ```sql
 SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT 1');

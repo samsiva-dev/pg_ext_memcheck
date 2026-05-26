@@ -571,6 +571,7 @@ The MVP set defined for the first working version, all delivered:
 | Context tree snapshot + diff | `context_walker.c` | ✅ Shipped |
 | `ext_memcheck.begin()` / `ext_memcheck.end()` SQL API | `sql_api.c` + SQL | ✅ Shipped |
 | Wrong-context allocation detection | `memcheck_hooks.c` | ✅ Shipped |
+| Monotonic context-bloat detection (Bug 6) with linear / superlinear shape classification at log-spaced checkpoints; severity bumped one rung when growth is superlinear | `sql_api.c` (`analyze_bloat`), driven through the `growth_benchmark` scenario | ✅ Shipped |
 | Regress self-test (`pg_ext_memcheck` checks itself) | `test/sql/`, `test/expected/` | ✅ Shipped (16 cases + buggy fixture) |
 | Violation log | `violation_log.c` | ✅ Shipped — promoted directly to the shared-memory ring buffer originally planned for Phase 2, so multi-backend visibility is in 0.1.0 Beta |
 
@@ -580,7 +581,7 @@ These design §12 items were implemented early and ship in 0.1.0 Beta:
 
 - Shmem sentinel probe (`shmem_probe.c`) + `register_shmem_probe()` / `probe_check()` / `clear_shmem_registry()` SQL API
 - DSM lifecycle tracker (`dsm_tracker.c`) + `track_dsm_handle()` / `dsm_tracking()` / `clear_dsm_tracking()` SQL API and `on_proc_exit` leak safety-net
-- `ext_memcheck.run_scenario()` with the scenarios `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`
+- `ext_memcheck.run_scenario()` with the scenarios `growth_benchmark` (host for Phase 1 bloat detection above), `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`
 - Shared (multi-backend) violation log via `LWLock`-protected shmem ring; per-session draining in `end()` via (`backend_pid`, `ts >= begin time`)
 - Source-library attribution (`source_lib` column) resolved through `dladdr()` against the active hook chain
 

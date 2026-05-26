@@ -15,6 +15,7 @@ Phase 1 focuses on the bugs that hurt extension authors most often and that no e
 
 - **Context leak detection** via before/after tree snapshots across query execution
 - **Wrong-context allocation detection** — palloc() calls that accidentally land in `TopMemoryContext` or `CacheMemoryContext`
+- **Monotonic context-bloat detection** — log-spaced checkpoint analysis with linear / superlinear shape classification and severity escalation, surfaced as `ctx_bloat` violations through the `growth_benchmark` scenario
 - **Shmem sentinel probing** — sentinel bytes around shared memory allocations, verified post-invocation
 - **DSM lifecycle tracking** — attach/detach lifecycle verification to catch leaked dynamic shared memory segments
 - **SQL-queryable violation log** — all detected violations are written to a shared ring buffer and exposed via `ext_memcheck.flush_violations()`
@@ -36,3 +37,4 @@ Phase 2 adds probes that require process isolation:
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
 | Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
+| `all`-mode skips non-planned statements | In `all` mode the before-snapshot is taken in `planner_hook`. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, `SET`, etc.) bypass both hooks, so neither is analyzed. Use `executor` mode if you need every executor invocation bracketed. |

@@ -68,7 +68,7 @@ typedef struct CtxSnapshot {
     Size   totalAllocated;
     Size   totalFree;
     int    depth;           /* depth in tree */
-    Oid    parentHash;      /* hash of parent name+depth for diff */
+    uint32 parentHash;      /* hash of parent name+depth for diff */
 } CtxSnapshot;
 
 // Context Tree Structure
@@ -85,19 +85,20 @@ typedef struct CtxTree {
 
 ### violation_log.c
 
-Manages a fixed-size ring buffer (`256`) in shared memory, protected by a single `LWLock`. Consumers call `flush_violations()` to drain the buffer into the `ext_memcheck.violation_log` table.
+Manages a fixed-size ring buffer (`2048`) in shared memory, protected by a single `LWLock`. Consumers call `flush_violations()` to drain the buffer into the `ext_memcheck.violation_log` table; `end()` drains only the current session's entries.
 
 ```c
 typedef struct ViolationEntry {
     TimestampTz   ts;
     int           backend_pid;
     char          check_type[32];      // e.g., "context_leak", "wrong_ctx_alloc", etc.
-    char          severity[16];        // e.g., "ERROR", "WARNING", "INFO", "OK"
+    char          severity[16];        // "ERROR", "WARNING", "INFO"
     char          detail[256];         // Detailed message about the violation
+    char          source_lib[64];      // basename of the .so that triggered the violation
 } ViolationEntry;
 ```
 
-**Buffer capacity is hard set to 256 at startup**. When full, oldest entries are overwritten (oldest-first eviction). This is intentional: recent violations are more actionable.
+**Buffer capacity is hard set to 2048 at startup**. When full, oldest entries are overwritten (oldest-first eviction). This is intentional: recent violations are more actionable.
 
 ---
 
@@ -109,7 +110,7 @@ Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable`
 
 ### shmem_probe.c 
 
-Maintains a `ProbeRegistry` in shared memory (up to 16 entries). `probe_register(seg_name, alloc_size, data_end)` looks up an existing `ShmemInitStruct` allocation by its exact size and writes a sentinel byte (`0xDE`) at `base_ptr[data_end]`. After a workload runs, `probe_check_all()` re-reads each sentinel and logs `shmem_overrun` violations where the byte has changed.
+Maintains a `ProbeRegistry` in shared memory (up to 32 entries). `probe_register(seg_name, alloc_size, data_end)` looks up an existing `ShmemInitStruct` allocation by its exact size and writes a sentinel byte (`0xDE`) at `base_ptr[data_end]`. After a workload runs, `probe_check_all()` re-reads each sentinel and logs `shmem_overrun` violations where the byte has changed.
 
 Two sentinel placement strategies are used:
 - **Own segments** (allocated with `+1` byte in `_PG_init`): `data_end = sizeof(struct)` — the sentinel occupies the reserved guard byte.
@@ -121,7 +122,7 @@ Users can register their own extension's segments via the SQL function `ext_memc
 
 ### dsm_tracker.c 
 
-Hooks `dsm_attach()` and `dsm_detach()` to maintain a per-backend table of active DSM handles. At test window close, any handle in the attach table without a matching detach is logged as a `dsm_leak` violation.
+Maintains a shared-memory `DsmTrackerState` table of observed DSM handles (manual registration via `ext_memcheck.track_dsm_handle()`; live/detached status is probed at query time). At test window close, any handle still reachable is logged as a `dsm_leak` violation.
 
 ---
 

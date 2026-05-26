@@ -37,8 +37,8 @@ SELECT * FROM ext_memcheck.violation_log;
 | `id` | `int` | Auto-incrementing violation ID |
 | `ts` | `timestamptz` | Timestamp of the violation |
 | `backend_pid` | `int` | PID of the backend that detected the violation |
-| `check_type` | `text` | Type of the check that detected the violation like context_leak, wrong_context, etc. |
-| `severity` | `text` | Severity of the violation like CRITICAL, WARNING, INFO etc. |
+| `check_type` | `text` | Type of the check that detected the violation: `context_leak`, `wrong_ctx_alloc`, `ctx_bloat`, `shmem_overrun`, `dsm_leak`. |
+| `severity` | `text` | Severity of the violation: `ERROR`, `WARNING`, or `INFO`. |
 | `detail` | `text` | Human-readable description of the violation |
 | `source_lib` | `text` | The library that triggered the violation (e.g., buggy_pg_ext) |
 
@@ -53,7 +53,7 @@ SELECT * FROM ext_memcheck.violation_log;
 
 ## ext_memcheck.begin()
 
-Opens a manual test window targeting a specific extension by context-name pattern. The monitoring mode (`all` / `executor` / `none`) is controlled separately by the `pg_ext_memcheck.memcheck_mode` GUC — `begin()` does **not** change the mode.
+Opens a manual test window targeting a specific extension by context-name pattern. The monitoring mode (`all` / `executor` / `none`) is controlled by the `pg_ext_memcheck.memcheck_mode` GUC. If the mode is `none` when `begin()` is called, `begin()` activates it to `all` so a window opens without a prior `SET`; an explicit pre-`SET` of `executor` or `all` is honoured unchanged. The matching `end()` resets the mode back to `none`.
 
 ```sql
 -- Scope checks to contexts whose names match the SQL LIKE pattern 'MyExtCtx%'
@@ -142,7 +142,7 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scenario_name` | `text` | — | Scenario name. Phase 1: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`. Phase 2 (done): `wrong_context_probe`. See [Stress Scenarios](/scenarios/). |
+| `scenario_name` | `text` | — | Scenario name. All four ship in 0.1.0 Beta: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`. See [Stress Scenarios](/scenarios/). |
 | `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
 | `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
 
@@ -296,7 +296,7 @@ SET pg_ext_memcheck.bloat_min_bytes = 65536;
 SET pg_ext_memcheck.bloat_min_bytes = 0;
 ```
 
-**Default:** `16384` (16 KiB)  
+**Default:** `8192` (8 KiB)  
 **Range:** `0` – `INT_MAX`  
 **Scope:** `PGC_USERSET` — effective immediately, no restart required.
 
@@ -336,8 +336,8 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 | Type | Phase | Status | Description |
 |---|---|---|---|
 | `context_leak` | 1 | Available | A `MemoryContext` created during query execution was not freed by `ExecutorEnd`. |
-| `wrong_context` | 1 | Available | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
-| `shmem_overrun` | 2 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
-| `dsm_leak` | 2 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
+| `wrong_ctx_alloc` | 1 | Available | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
+| `shmem_overrun` | 1 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
+| `dsm_leak` | 1 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
 | `ctx_bloat` | 1 | Available | A `MemoryContext` grew monotonically across two or more log-spaced checkpoints in a `growth_benchmark` run. Severity reflects total growth; superlinear acceleration bumps severity one level. |
 | `use_after_reset` | 2 | Planned | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
