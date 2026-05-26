@@ -72,6 +72,65 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 ---
 
+## shmem_sentinel_probe
+
+Plants `0xDE` sentinel bytes just past the declared boundary of each registered shared memory segment, runs the workload, then verifies all sentinels are intact. A corrupted sentinel means the extension under test wrote past its declared shmem boundary.
+
+```sql
+SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
+
+-- Inspect any overrun violations
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
+
+-- Reset registry between test runs
+SELECT ext_memcheck.clear_shmem_registry();
+```
+
+**How it works:** `shmem_probe.c` allocates a `ProbeRegistry` in shared memory. The scenario calls `probe_register(seg_name, alloc_size, data_end)` for the `ViolationLog` and `DsmTrackerState` segments — both allocated with an extra byte in `_PG_init`, so `alloc_size = sizeof(struct) + 1` and the sentinel is placed at `data_end = sizeof(struct)`. After the workload loop, `probe_check_all()` reads each sentinel byte. Any value other than `0xDE` logs a `shmem_overrun` ERROR violation.
+
+To probe your own extension's shared memory segment, call `ext_memcheck.register_shmem_probe(seg_name, allocated_size)` before running this scenario.
+
+**What it catches:** Off-by-one writes past a segment's declared boundary; memset or memcpy calls whose length is computed incorrectly.
+
+---
+
+## wrong_context_probe
+
+Runs the target workload SQL a configurable number of times, then diffs the `MemoryContext` tree before and after to detect allocations that landed in long-lived global contexts (`TopMemoryContext`, `CacheMemoryContext`). Unlike the generic executor-hook path, this scenario **skips the `context_leak` diff** entirely — it runs only `check_wrong_context_alloc`, so results are focused exclusively on wrong-context violations without noise from ordinary leak detection.
+
+```sql
+SELECT ext_memcheck.run_scenario('wrong_context_probe', 50, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'wrong_ctx_alloc';
+```
+
+**How it works:**
+
+1. Before the first iteration, `context_walker` snapshots the full `MemoryContext` tree.
+2. The workload SQL is executed `iterations` times via SPI.
+3. After the last iteration, a second snapshot is taken and `check_wrong_context_alloc` is called with the before/after pair.
+4. `check_wrong_context_alloc` runs two passes:
+   - **Growth pass** — any named global context (`TopMemoryContext`, `CacheMemoryContext`) whose `totalAllocated` increased since the pre-run snapshot emits a `wrong_ctx_alloc` WARNING with the byte delta.
+   - **New-child pass** — any context that appeared in the post-run snapshot but not the pre-run snapshot and whose parent is a known global emits a `wrong_ctx_alloc` WARNING identifying the newly created child.
+
+**What it catches:** Extension functions that allocate in long-lived contexts (`TopMemoryContext`, `CacheMemoryContext`) instead of query-local contexts — a common source of per-backend memory growth that accumulates silently across sessions.
+
+**When to use over the default executor hook:** The executor hook also calls `check_wrong_context_alloc`, but it does so alongside context-leak detection and only for queries passing through the hook. Use `wrong_context_probe` when you want a clean, isolated signal across N controlled repetitions without unrelated leak noise.
+
+---
+
+## dsm_lifecycle_check *(Phase 2)*
+
+Runs the target function inside a DSM segment allocation/deallocation cycle and verifies that the extension correctly attaches and detaches.
+
+```sql
+SELECT ext_memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
+```
+
+**What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls.
+
+---
+
 ## context_reset_storm *(Phase 2)*
 
 Rapidly and repeatedly resets the current `MemoryContext` between invocations of the target function. Reveals extensions that hold raw pointers across context boundaries.
@@ -105,60 +164,3 @@ SELECT ext_memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', i
 **What it catches:** Shmem overruns under concurrent access; DSM lifecycle races; LWLock starvation.
 
 ---
-
-## shmem_sentinel_probe
-
-Plants `0xDE` sentinel bytes just past the declared boundary of each registered shared memory segment, runs the workload, then verifies all sentinels are intact. A corrupted sentinel means the extension under test wrote past its declared shmem boundary.
-
-```sql
-SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
-
--- Inspect any overrun violations
-SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'shmem_overrun';
-
--- Reset registry between test runs
-SELECT ext_memcheck.clear_shmem_registry();
-```
-
-**How it works:** `shmem_probe.c` allocates a `ProbeRegistry` in shared memory. The scenario calls `probe_register(seg_name, alloc_size, data_end)` for the `ViolationLog` and `DsmTrackerState` segments — both allocated with an extra byte in `_PG_init`, so `alloc_size = sizeof(struct) + 1` and the sentinel is placed at `data_end = sizeof(struct)`. After the workload loop, `probe_check_all()` reads each sentinel byte. Any value other than `0xDE` logs a `shmem_overrun` ERROR violation.
-
-To probe your own extension's shared memory segment, call `ext_memcheck.register_shmem_probe(seg_name, allocated_size)` before running this scenario.
-
-**What it catches:** Off-by-one writes past a segment's declared boundary; memset or memcpy calls whose length is computed incorrectly.
-
----
-
-## dsm_lifecycle_check *(Phase 2)*
-
-Runs the target function inside a DSM segment allocation/deallocation cycle and verifies that the extension correctly attaches and detaches.
-
-```sql
-SELECT ext_memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
-```
-
-**What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls.
-
----
-
-## wrong_context_probe *(Phase 2)*
-
-Runs the target workload SQL a configurable number of times, then diffs the `MemoryContext` tree before and after to detect allocations that landed in long-lived global contexts (`TopMemoryContext`, `CacheMemoryContext`). Unlike the generic executor-hook path, this scenario **skips the `context_leak` diff** entirely — it runs only `check_wrong_context_alloc`, so results are focused exclusively on wrong-context violations without noise from ordinary leak detection.
-
-```sql
-SELECT ext_memcheck.run_scenario('wrong_context_probe', 50, 'SELECT your_ext.fn()');
-SELECT ext_memcheck.flush_violations();
-SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'wrong_ctx_alloc';
-```
-
-**How it works:**
-
-1. Before the first iteration, `context_walker` snapshots the full `MemoryContext` tree.
-2. The workload SQL is executed `iterations` times via SPI.
-3. After the last iteration, a second snapshot is taken and `check_wrong_context_alloc` is called with the before/after pair.
-4. `check_wrong_context_alloc` runs two passes:
-   - **Growth pass** — any named global context (`TopMemoryContext`, `CacheMemoryContext`) whose `totalAllocated` increased since the pre-run snapshot emits a `wrong_ctx_alloc` WARNING with the byte delta.
-   - **New-child pass** — any context that appeared in the post-run snapshot but not the pre-run snapshot and whose parent is a known global emits a `wrong_ctx_alloc` WARNING identifying the newly created child.
-
-**What it catches:** Extension functions that allocate in long-lived contexts (`TopMemoryContext`, `CacheMemoryContext`) instead of query-local contexts — a common source of per-backend memory growth that accumulates silently across sessions.
-
-**When to use over the default executor hook:** The executor hook also calls `check_wrong_context_alloc`, but it does so alongside context-leak detection and only for queries passing through the hook. Use `wrong_context_probe` when you want a clean, isolated signal across N controlled repetitions without unrelated leak noise.
