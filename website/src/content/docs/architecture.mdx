@@ -108,7 +108,7 @@ Registers all `pg_ext_memcheck.*` GUC parameters with `DefineCustomBoolVariable`
 
 ---
 
-### shmem_probe.c
+### shmem_probe.c 
 
 Maintains a `ProbeRegistry` in shared memory (up to 32 entries). `probe_register(seg_name, alloc_size, data_end)` looks up an existing `ShmemInitStruct` allocation by its exact size and writes a sentinel byte (`0xDE`) at `base_ptr[data_end]`. After a workload runs, `probe_check_all()` re-reads each sentinel and logs `shmem_overrun` violations where the byte has changed.
 
@@ -120,7 +120,7 @@ Users can register their own extension's segments via the SQL function `ext_memc
 
 ---
 
-### dsm_tracker.c
+### dsm_tracker.c 
 
 Maintains a shared-memory `DsmTrackerState` table of observed DSM handles (manual registration via `ext_memcheck.track_dsm_handle()`; live/detached status is probed at query time). At test window close, any handle still reachable is logged as a `dsm_leak` violation.
 
