@@ -47,7 +47,7 @@ LANGUAGE C STRICT;
     ext_memcheck.end - End the current test session and trigger violation analysis
      - Returns: check_type TEXT, severity TEXT, detail TEXT, ts TIMESTAMPTZ
      - Resets the session state for the next test
-    ext_memcheck.run_scenario - Run a predefined test scenario by name (e.g. 'context_reset_storm', 'tx_abort_loop', etc.)
+    ext_memcheck.run_scenario - Run a predefined test scenario by name (e.g. 'growth_benchmark', 'tx_abort_loop', 'shmem_sentinel_probe', 'wrong_context_probe')
 */
 
 CREATE OR REPLACE FUNCTION ext_memcheck.begin(
