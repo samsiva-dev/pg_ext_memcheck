@@ -186,7 +186,7 @@ Measures per-`MemoryContext` used bytes at **log-spaced checkpoints** across rep
 
 1. Checkpoint iterations are computed as powers of 10 up to `iterations` (e.g., 1 → 10 → 100 → 1000), capped at 8 checkpoints.
 2. At each checkpoint, `context_walker` snapshots every context in the `MemoryContext` tree and records used bytes (allocated − freed), keyed by *(name, depth, parent hash)*.
-3. After all iterations finish, each context is tested: monotonic growth across ≥ 2 checkpoints, total growth ≥ `bloat_min_bytes` (default 16 KiB).
+3. After all iterations finish, each context is tested: monotonic growth across ≥ 2 checkpoints, total growth ≥ `bloat_min_bytes` (default 8 KiB).
 4. Growth shape is classified as **linear** or **superlinear** (late-interval rate > 1.5× early-interval rate). Superlinear growth bumps the severity one level.
 
 **Severity levels:**
