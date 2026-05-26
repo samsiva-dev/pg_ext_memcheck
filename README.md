@@ -116,7 +116,7 @@ For `ctx_bloat` violations (emitted by `growth_benchmark`):
 |---|---|---|
 | `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear growth |
 | `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear growth |
-| `INFO` | Total growth ≥ `bloat_min_bytes` (default 16 KiB) | — |
+| `INFO` | Total growth ≥ `bloat_min_bytes` (default 8 KiB) | — |
 
 Growth is classified as **superlinear** when the per-iteration rate in the final checkpoint interval exceeds 1.5× the rate in the first interval.
 
@@ -178,8 +178,8 @@ SET pg_ext_memcheck.memcheck_mode = 'none';
 
 | Function | Returns | Description |
 |---|---|---|
-| `ext_memcheck.begin(ext_context_pattern TEXT DEFAULT '', options JSONB DEFAULT NULL)` | `text` | Opens a test window scoped to contexts whose names match `ext_context_pattern` (SQL `LIKE` syntax; empty string = all). The monitoring mode (`all`/`executor`/`none`) is set separately via the GUC and is not changed by `begin()`. |
-| `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts, source_lib)` | Closes the window and returns violations scoped to this session (current `backend_pid` + `ts >= begin()` time). Matched slots are cleared from the ring atomically — repeated calls return 0 rows. Does not flush to `violation_log`. |
+| `ext_memcheck.begin(ext_context_pattern TEXT DEFAULT '', options JSONB DEFAULT NULL)` | `text` | Opens a test window scoped to contexts whose names match `ext_context_pattern` (SQL `LIKE` syntax; empty string = all). If `memcheck_mode` is `none` when called, `begin()` activates it to `all` so a window opens without a prior `SET`; an explicit pre-`SET` of `executor` or `all` is honoured unchanged. |
+| `ext_memcheck.end()` | `TABLE(check_type, severity, detail, ts, source_lib)` | Closes the window and returns violations scoped to this session (current `backend_pid` + `ts >= begin()` time). Matched slots are cleared from the ring atomically — repeated calls return 0 rows. Resets `memcheck_mode` to `none` and does not flush to `violation_log`. |
 | `ext_memcheck.flush_violations()` | `int` | Drains the **entire** ring buffer across all backends into `violation_log`; returns count flushed. Clears all ring slots. |
 | `ext_memcheck.run_scenario(scenario_name TEXT, iterations INT, workload TEXT)` | `text` | Runs a named stress scenario with a custom workload query. |
 | `ext_memcheck.clear_violations()` | `void` | Clears all rows from the `violation_log` table (does not affect ring buffer). |
@@ -281,6 +281,7 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
 | Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
+| `all`-mode skips non-planned statements | In `all` mode the before-snapshot is taken in `planner_hook`. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, `SET`, etc.) bypass both hooks, so neither is analyzed. Use `executor` mode if you need every executor invocation bracketed. |
 
 ---
 

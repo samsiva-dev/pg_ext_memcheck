@@ -340,14 +340,15 @@ Responsibility: Write findings to a shared ring buffer readable via SQL.
 
 **Ring buffer layout (in shmem):**
 ```c
-#define MEMCHECK_MAX_VIOLATIONS 256
+#define MEMCHECK_MAX_VIOLATIONS 2048
 
 typedef struct ViolationEntry {
     TimestampTz  ts;
     int          backend_pid;
     char         check_type[32];   /* "context_leak", "wrong_ctx_alloc", etc. */
-    char         severity[8];      /* "ERROR", "WARN", "OK" */
-    char         detail[512];
+    char         severity[16];     /* "ERROR", "WARNING", "INFO" */
+    char         detail[256];
+    char         source_lib[64];   /* basename of the .so that triggered the violation */
 } ViolationEntry;
 
 typedef struct ViolationLog {
@@ -450,7 +451,7 @@ SELECT ext_memcheck.clear_shmem_registry();
 | `ts` | TIMESTAMPTZ | When the violation was logged |
 | `backend_pid` | INT | Which backend ran the test |
 | `check_type` | TEXT | `context_leak`, `wrong_ctx_alloc`, `shmem_overrun`, `dsm_leak`, `ctx_bloat` |
-| `severity` | TEXT | `ERROR`, `WARN`, `OK` |
+| `severity` | TEXT | `ERROR`, `WARNING`, `INFO` |
 | `detail` | TEXT | Human-readable detail |
 | `source_lib` | TEXT | Extension library that triggered the violation |
 
@@ -496,7 +497,7 @@ For each entry E in after-snapshot:
 For each entry E in before-snapshot not found in after → deleted context (expected cleanup)
 ```
 
-The threshold for "bloat" is configurable (default: 0 — any growth is reported as WARN).
+The threshold for "bloat" is configurable via the `pg_ext_memcheck.bloat_min_bytes` GUC (default: 8192 — 8 KiB; growth below this floor is silently filtered to suppress noise from normal PG core context churn). The matching per-query leak threshold is `pg_ext_memcheck.min_leak_bytes`, also defaulting to 8 KiB. Reportable growth is classified `INFO` / `WARNING` / `ERROR` by magnitude (see severity thresholds in README).
 
 ---
 
@@ -504,11 +505,12 @@ The threshold for "bloat" is configurable (default: 0 — any growth is reported
 
 ```
 pg_ext_memcheck shmem segment:
-├── ViolationLog        (256 entries × ~600 bytes = ~150 KB)
-├── WorkerSlot          (test scenario name + target ext name = ~256 bytes)
-└── ProbeRegistry       (up to 32 probed segments × 64 bytes each = ~2 KB)
+├── ViolationLog        (2048 entries × ~376 bytes = ~770 KB)
+├── DsmTrackerState     (up to 128 segments × ~32 bytes each = ~4 KB)
+├── ProbeRegistry       (up to 32 probed segments × ~88 bytes each = ~3 KB)
+└── SentinelTest        (10-byte test segment for register_shmem_probe regress)
 
-Total: ~155 KB shmem
+Total: ~780 KB shmem (WorkerSlot deferred with worker_harness.c to Phase 2)
 ```
 
 ---
@@ -560,34 +562,40 @@ CREATE EXTENSION pg_ext_memcheck;
 
 ---
 
-## 11. MVP Scope (Phase 1)
+## 11. MVP Scope (Phase 1 — shipped in 0.1.0 Beta)
 
-Deliver these and only these for the first working version.
+The MVP set defined for the first working version, all delivered:
 
-| Feature | Module | Effort |
+| Feature | Module | Status |
 |---|---|---|
-| Context tree snapshot + diff | `context_walker.c` | Medium |
-| `ext_memcheck.begin()` / `ext_memcheck.end()` SQL API | `memcheck_hooks.c` + SQL | Small |
-| Violation log (in-memory, single backend first) | `violation_log.c` | Small |
-| Wrong-context allocation detection | `memcheck_hooks.c` | Medium |
-| Basic regress test (self-test: `pg_ext_memcheck` checks itself) | `test/regress/` | Small |
+| Context tree snapshot + diff | `context_walker.c` | ✅ Shipped |
+| `ext_memcheck.begin()` / `ext_memcheck.end()` SQL API | `sql_api.c` + SQL | ✅ Shipped |
+| Wrong-context allocation detection | `memcheck_hooks.c` | ✅ Shipped |
+| Regress self-test (`pg_ext_memcheck` checks itself) | `test/sql/`, `test/expected/` | ✅ Shipped (16 cases + buggy fixture) |
+| Violation log | `violation_log.c` | ✅ Shipped — promoted directly to the shared-memory ring buffer originally planned for Phase 2, so multi-backend visibility is in 0.1.0 Beta |
 
-**Total estimated C code: ~800 lines**  
-**SQL + test: ~200 lines**
+### Phase 2 features pulled forward into 0.1.0 Beta
+
+These design §12 items were implemented early and ship in 0.1.0 Beta:
+
+- Shmem sentinel probe (`shmem_probe.c`) + `register_shmem_probe()` / `probe_check()` / `clear_shmem_registry()` SQL API
+- DSM lifecycle tracker (`dsm_tracker.c`) + `track_dsm_handle()` / `dsm_tracking()` / `clear_dsm_tracking()` SQL API and `on_proc_exit` leak safety-net
+- `ext_memcheck.run_scenario()` with the scenarios `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`
+- Shared (multi-backend) violation log via `LWLock`-protected shmem ring; per-session draining in `end()` via (`backend_pid`, `ts >= begin time`)
+- Source-library attribution (`source_lib` column) resolved through `dladdr()` against the active hook chain
 
 ---
 
-## 12. Phase 2 — Additions
+## 12. Phase 2 — Remaining work for the next release
 
-These are planned but not in scope for MVP.
+Items still outstanding after 0.1.0 Beta:
 
-- Shmem sentinel probe (`shmem_probe.c`)
-- DSM lifecycle tracker (`dsm_tracker.c`)
-- BGWorker crash isolation (`worker_harness.c`)
-- Shared violation log (multi-backend, ring buffer in shmem)
-- Full scenario catalog (`run_scenario()`)
+- BGWorker crash isolation (`worker_harness.c` — stub only today; needed for Bug 3 / use-after-reset)
+- Remaining stress scenarios from §8 not yet implemented: `context_reset_storm`, `concurrent_backends`, `cursor_leak`, `oom_simulation`, `cold_warm_cold`
 - `growth_benchmark` scenario with chart output
 - PG17 / PG18 AIO compatibility layer (AIO uses different context patterns)
+- Nested-query stack for `before_snapshot` so outer-query analysis is not dropped when a nested SQL invocation closes its own executor window
+- `all`-mode coverage for cached/prepared statements (extended protocol skips `planner_hook`) and utility statements (bypass both hooks)
 
 ---
 
