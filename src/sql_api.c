@@ -33,6 +33,7 @@
 
 // Storage Includes
 #include "storage/dsm.h"
+#include "access/xact.h"      /* BeginInternalSubTransaction, Rollback/ReleaseCurrentSubTransaction */
 
 // JSONB for options parsing
 #include "utils/jsonb.h"
@@ -499,6 +500,15 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     bool     run_wrong_ctx;   /* check_wrong_context_alloc -> wrong_ctx_alloc */
     bool     need_snapshots;
 
+    /*
+     * The planner/executor hooks already took a before-snapshot for this SQL
+     * function call.  If we leave it in place, ExecutorEnd will fire after we
+     * return and re-report every violation we generate here — with an empty
+     * source_lib — producing exact duplicates.  Discard it now so ExecutorEnd
+     * finds before_snapshot == NULL and skips the outer analysis entirely.
+     */
+    memcheck_discard_outer_hook_snapshot();
+
     elog(INFO, "Running memory check scenario: %s", scenario_str);
     elog(INFO, "Iterations: %d", iterations);
     elog(INFO, "Workload: %s", workload_str);
@@ -659,27 +669,46 @@ run_growth_benchmark(int iterations, const char *workload)
 static void
 run_tx_abort_loop(int iterations, const char *workload) {
     int i;
+
     if (iterations <= 0)
         elog(ERROR, "Iterations must be a positive integer");
 
+    /*
+     * Use plain SPI_connect() — we don't need non-atomic mode because
+     * subtransaction management is handled via the internal C API
+     * (BeginInternalSubTransaction / RollbackAndReleaseCurrentSubTransaction)
+     * rather than through SPI_execute("SAVEPOINT ...").  SPI_execute rejects
+     * all transaction-control statements with SPI_ERROR_TRANSACTION (-8)
+     * regardless of the connection mode when called from a SQL function.
+     */
     if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
 
     for (i = 0; i < iterations; i++) {
-        int ret = SPI_execute("SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY)
-            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+        int ret;
+
+        /*
+         * Open a subtransaction.  This is equivalent to SAVEPOINT but goes
+         * through the internal xact API, which is always available inside a
+         * backend regardless of SPI connection mode.
+         */
+        BeginInternalSubTransaction(NULL);
 
         ret = SPI_execute(workload, true, 0);
         if (ret != SPI_OK_SELECT)
+        {
+            /* Roll back the subtransaction before raising the error */
+            RollbackAndReleaseCurrentSubTransaction();
             elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+        }
 
-        ret = SPI_execute("ROLLBACK TO SAVEPOINT _memcheck_sp", false, 0);
-        if (ret != SPI_OK_UTILITY)
-            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+        /*
+         * Intentionally roll back — this is the whole point of tx_abort_loop:
+         * simulate a workload whose effects are repeatedly discarded so we can
+         * observe whether any memory leaks survive the abort.
+         */
+        RollbackAndReleaseCurrentSubTransaction();
     }
-
-    SPI_execute("RELEASE SAVEPOINT _memcheck_sp", false, 0); // Clean up savepoint after loop
 
     SPI_finish();
 }

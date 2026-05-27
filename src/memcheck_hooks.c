@@ -417,7 +417,25 @@ analyze_and_log_diff(CtxDiff *diff)
      * whose names match are reported, eliminating false positives from normal
      * PostgreSQL core context growth.
      */
+    /*
+     * Never report growth in the extension's own snapshot-allocation context.
+     * Its size is a direct function of how many snapshots were taken (e.g.
+     * growth_benchmark takes one per checkpoint), not of the workload under
+     * test, so reporting it would always be a false positive.
+     */
+    if (strcmp(diff->name, "MemCheckHooksContext") == 0)
+        return;
+
     if (!ctx_matches_target(diff->name))
+        return;
+
+    /*
+     * Allowlist check: if the caller explicitly permitted this context via
+     * allowed_contexts (e.g. to silence known-innocent cache growth), skip it
+     * so that extensions which intentionally retain data across queries are
+     * not falsely flagged as leaking.
+     */
+    if (is_allowed_context_target(diff->name))
         return;
 
     /*
@@ -460,6 +478,25 @@ analyze_and_log_diff(CtxDiff *diff)
 
     // Finally, write the violation to the shared log
     violation_log_write("context_leak", severity, detail, active_hook_libs);
+}
+
+/*
+ * memcheck_discard_outer_hook_snapshot
+ *
+ * Frees and NULLs the before_snapshot that was taken by the planner or
+ * ExecutorStart hook for the currently-running SQL function call.  This
+ * prevents ExecutorEnd from comparing before (pre-function) vs after
+ * (post-function) and re-logging all violations that the function already
+ * reported under its own source_lib attribution.
+ */
+void
+memcheck_discard_outer_hook_snapshot(void)
+{
+    if (before_snapshot != NULL)
+    {
+        free_context_tree(before_snapshot);
+        before_snapshot = NULL;
+    }
 }
 
 // Install and Uninstall Hooks

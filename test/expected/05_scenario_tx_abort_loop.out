@@ -22,19 +22,31 @@ SELECT ext_memcheck.run_scenario('tx_abort_loop', 1) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: tx_abort_loop
 INFO:  Iterations: 1
 INFO:  Workload: SELECT 1
-ERROR:  pg_ext_memcheck: SPI_execute failed with code -8
+ ok 
+----
+ t
+(1 row)
+
 -- Standard run with 10 iterations
 SELECT ext_memcheck.run_scenario('tx_abort_loop', 10) IS NOT NULL AS ok;
 INFO:  Running memory check scenario: tx_abort_loop
 INFO:  Iterations: 10
 INFO:  Workload: SELECT 1
-ERROR:  pg_ext_memcheck: SPI_execute failed with code -8
+ ok 
+----
+ t
+(1 row)
+
 -- Return message must mention 'Scenario executed'
 SELECT ext_memcheck.run_scenario('tx_abort_loop', 1) LIKE '%Scenario executed%' AS msg_ok;
 INFO:  Running memory check scenario: tx_abort_loop
 INFO:  Iterations: 1
 INFO:  Workload: SELECT 1
-ERROR:  pg_ext_memcheck: SPI_execute failed with code -8
+ msg_ok 
+--------
+ t
+(1 row)
+
 -- Zero iterations must raise an error
 DO $$
 BEGIN

@@ -61,6 +61,15 @@ extern PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string
 void analyze_and_log_diff(CtxDiff *diff);
 void check_wrong_context_alloc(CtxTree *before, CtxTree *after);
 
+/*
+ * Discard the before-snapshot held by the outer executor/planner hook, if any.
+ * Must be called at the entry of SQL functions that perform their own
+ * before/after analysis (e.g. memcheck_run_scenario) so that the outer
+ * ExecutorEnd hook does not re-report the same memory delta a second time
+ * with an empty source_lib.
+ */
+void memcheck_discard_outer_hook_snapshot(void);
+
 // Global variable to track the active hook libraries for logging purposes, set by resolve_active_hook_libs().
 extern char active_hook_libs[128];
 
