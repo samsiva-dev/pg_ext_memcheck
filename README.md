@@ -106,8 +106,8 @@ For `context_leak` and `wrong_ctx_alloc` violations:
 
 | Level | Condition |
 |---|---|
-| `ERROR` | Net context growth ≥ 1 MiB |
-| `WARNING` | Net context growth ≥ 64 KiB and < 1 MiB |
+| `ERROR` | Net context growth > 1 MiB |
+| `WARNING` | Net context growth > 64 KiB and ≤ 1 MiB |
 | `INFO` | Net context growth ≥ `min_leak_bytes` (default 8 KiB) |
 
 For `ctx_bloat` violations (emitted by `growth_benchmark`):

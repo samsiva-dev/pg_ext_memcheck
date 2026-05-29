@@ -8,9 +8,9 @@ This page shows how to use pg_ext_memcheck to test an extension with known memor
 For this example, we will using a buggy extension that allocates memory but forgets to free it, and also allocates in the wrong context. You can find the source code for this extension at: [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).
 
 What buggy-pg-ext does:
-1. Allocates `8KB` for each query in a child content under 'MessageContext' in the Planner Hook but never frees it → should trigger a `context_leak` violation.
+1. Allocates `8KB` for each query in a child context under 'MessageContext' in the Planner Hook but never frees it → should trigger a `context_leak` violation.
 2. Allocates `8KB` directly in `TopMemoryContext` in the Executor Hook for each query → should trigger a `wrong_ctx_alloc` violation.
-3. It does only allocates and return. No other logic is present, so it won't cause any functional test failures — just memory leaks.
+3. It only allocates and returns. No other logic is present, so it won't cause any functional test failures — just memory leaks.
 
 ## Setting up the test
 1. Install the buggy extension in your PostgreSQL instance from [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).

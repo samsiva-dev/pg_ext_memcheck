@@ -122,14 +122,14 @@ SELECT ext_memcheck.flush_violations();
 ```
 
 <Aside type="note" title="Available scenarios">
-  `growth_benchmark`, `tx_abort_loop` and `shmem_sentinel_probe` are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are planned for Phase 2. See the [Stress Scenarios](/scenarios/) page for details.
+  All four scenarios — `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` — are available now. Additional scenarios (`context_reset_storm`, `concurrent_backends`, etc.) are planned for Phase 2. See the [Stress Scenarios](/scenarios/) page for details.
 </Aside>
 
 ## GUC parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `pg_ext_memcheck.memcheck_mode` | `enum` | `all` | `all` / `executor` / `none` — controls which execution phases are hooked. See [API reference](/api/#pg_ext_memcheckmemcheck_mode). |
+| `pg_ext_memcheck.memcheck_mode` | `enum` | `none` | `all` / `executor` / `none` — controls which execution phases are hooked. See [API reference](/api/#pg_ext_memcheckmemcheck_mode). |
 | `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (in bytes) is silently ignored. |
 
 `memcheck_mode` controls **which phases** are hooked; the `ext_context_pattern` argument to `begin()` controls **which contexts** are reported. Set the GUC once for the session:
