@@ -8,9 +8,9 @@ This page shows how to use pg_ext_memcheck to test an extension with known memor
 For this example, we will using a buggy extension that allocates memory but forgets to free it, and also allocates in the wrong context. You can find the source code for this extension at: [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).
 
 What buggy-pg-ext does:
-1. Allocates `8KB` for each query in a child content under 'MessageContext' in the Planner Hook but never frees it → should trigger a `context_leak` violation.
+1. Allocates `8KB` for each query in a child context under 'MessageContext' in the Planner Hook but never frees it → should trigger a `context_leak` violation.
 2. Allocates `8KB` directly in `TopMemoryContext` in the Executor Hook for each query → should trigger a `wrong_ctx_alloc` violation.
-3. It does only allocates and return. No other logic is present, so it won't cause any functional test failures — just memory leaks.
+3. It only allocates and returns. No other logic is present, so it won't cause any functional test failures — just memory leaks.
 
 ## Setting up the test
 1. Install the buggy extension in your PostgreSQL instance from [buggy-pg-ext](https://github.com/samsiva-dev/buggy-pg-ext).
@@ -26,7 +26,7 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 Run a simple query that invokes the buggy extension's hooks:
 ```sql
 -- Any SELECT will do, as the extension's hooks run for every query
-SELECT count(*) FROM companies;
+SELECT count(*) FROM pg_class;
 
 SELECT * FROM ext_memcheck.flush_violations(); -- flushes the ring buffer into the violation_log table
 SELECT * FROM ext_memcheck.violation_log; -- check the persisted violation log
@@ -56,7 +56,7 @@ You can also run a more extensive scenario that executes the same query in a loo
 ```sql
 SET pg_ext_memcheck.memcheck_mode = 'all';
 SELECT ext_memcheck.begin('');
-SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT count(*) FROM companies;');
+SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 1000, workload := 'SELECT count(*) FROM pg_class;');
 SELECT * FROM ext_memcheck.end();
 ```
 ### Output
@@ -83,7 +83,7 @@ After 1000 iterations the accumulated leaks cross multiple severity thresholds. 
    Bug 1 — the planner hook creates a child context under `MessageContext` and allocates 8 KB into it. This single entry represents the last iteration's context, which was not yet reset. Earlier iterations' contexts were freed when `MessageContext` was reset at the end of each client message cycle during the scenario loop.
 
 4. **`context_leak WARNING` — `ExprContext` grew by ~194 KB**  
-   An internal PostgreSQL expression evaluation context that accumulated state across the 1000 iterations of `SELECT count(*) FROM companies`. This is not a bug in the extension — it is normal PostgreSQL behavior under repeated execution within a single session. It surfaces here because the before-snapshot was taken before the scenario loop started and the after-snapshot is taken at `end()`.
+   An internal PostgreSQL expression evaluation context that accumulated state across the 1000 iterations of `SELECT count(*) FROM pg_class`. This is not a bug in the extension — it is normal PostgreSQL behavior under repeated execution within a single session. It surfaces here because the before-snapshot was taken before the scenario loop started and the after-snapshot is taken at `end()`.
 
 5. **`context_leak INFO` — `MessageContext` grew by ~26 KB**  
    The parent context of `BuggyPlannerLeakCtx`. Its growth reflects the block overhead of hosting the child contexts created by Bug 1 across iterations, plus normal query message bookkeeping.
@@ -113,7 +113,7 @@ Or disable the automatic hooks entirely and use the manual `begin()` / `end()` A
 SET pg_ext_memcheck.memcheck_mode = 'all';
 -- Only report contexts whose names start with 'Buggy'
 SELECT ext_memcheck.begin('Buggy%');
-SELECT count(*) FROM companies;
+SELECT count(*) FROM pg_class;
 SELECT * FROM ext_memcheck.end();
 ```
 

@@ -45,9 +45,9 @@ SELECT * FROM ext_memcheck.violation_log;
 ### Severity levels
 | Level | Memory Leak Size |
 |---|---|
-| `ERROR` | ≥ 1 MB |
-| `WARNING` | ≥ 64 KB and < 1 MB |
-| `INFO` | >= min_leak_bytes and < 64 KB |
+| `ERROR` | > 1 MiB |
+| `WARNING` | > 64 KiB and ≤ 1 MiB |
+| `INFO` | ≥ min_leak_bytes and ≤ 64 KiB |
 
 ---
 
