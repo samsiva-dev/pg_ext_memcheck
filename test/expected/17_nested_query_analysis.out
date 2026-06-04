@@ -49,7 +49,6 @@ BEGIN
     RETURN (SELECT 42 AS inner_result);
 END;
 $$ LANGUAGE plpgsql;
-CREATE FUNCTION
 SET pg_ext_memcheck.memcheck_mode = 'executor';
 SET pg_ext_memcheck.min_leak_bytes = '0';
 -- Enable monitoring; workload will run nested queries
@@ -86,13 +85,11 @@ BEGIN
     RETURN (SELECT 100 AS level_3_result);
 END;
 $$ LANGUAGE plpgsql;
-CREATE FUNCTION
 CREATE OR REPLACE FUNCTION nested_level_3_middle() RETURNS int AS $$
 BEGIN
     RETURN nested_level_3_inner() + 1;
 END;
 $$ LANGUAGE plpgsql;
-CREATE FUNCTION
 DELETE FROM ext_memcheck.violation_log;
 SET pg_ext_memcheck.memcheck_mode = 'executor';
 -- New session for 3-level test
@@ -197,11 +194,8 @@ INFO:  Memory check session ended.
 -- Cleanup
 -- -----------------------------------------------------------------------
 DROP FUNCTION nested_level_3_middle();
-DROP FUNCTION
 DROP FUNCTION nested_level_3_inner();
-DROP FUNCTION
 DROP FUNCTION nested_level_2();
-DROP FUNCTION
 DELETE FROM ext_memcheck.violation_log;
 SET pg_ext_memcheck.memcheck_mode = 'none';
 RESET pg_ext_memcheck.min_leak_bytes;
