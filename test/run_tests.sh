@@ -168,7 +168,8 @@ cd "$ROOT_DIR"
     13_shmem_sentinel_probe \
     14_context_pattern_filter \
     15_buggy_ext_wrong_ctx_detection \
-    16_buggy_ext_dsm_leak_detection
+    16_buggy_ext_dsm_leak_detection \
+    17_nested_query_analysis
 
 echo ""
 echo "=== All regression tests passed ==="

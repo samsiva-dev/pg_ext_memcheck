@@ -63,26 +63,33 @@ static ExecutorEnd_hook_type prev_executor_end_hook = NULL;
  */
 static MemoryContext memcheck_hooks_ctx = NULL;
 
-/* Before-snapshot for the current (non-internal) query.
- *
- * LIMITATION (nested queries): This is a single pointer, not a stack.  When a
- * PL/pgSQL function (or any nested SQL invocation) triggers ExecutorStart/End
- * recursively, the inner ExecutorEnd will pfree() before_snapshot and set it to
- * NULL.  The outer ExecutorEnd then finds before_snapshot == NULL and silently
- * skips analysis for the outer query.  In practice this means memory checks are
- * only reliable for leaf (non-nested) queries within a single backend.  A future
- * Phase 2 fix would replace this pointer with a stack (MemoryContext-allocated
- * list) so each nesting level preserves its own before-snapshot.
+/*
+ * Snapshot frame for a single nesting level.
+ * Each frame holds the before-snapshot for that depth level and per-frame hook attribution.
+ */
+typedef struct SnapshotFrame {
+    CtxTree *snapshot;                    /* before-snapshot for this nesting level */
+    char     hook_libs[128];              /* per-frame hook library attribution */
+} SnapshotFrame;
+
+#define MEMCHECK_SNAPSHOT_STACK_MAX 16
+
+/*
+ * Fixed-depth stack of snapshot frames for handling nested queries.
+ * 
+ * Each ExecutorStart/planner_hook push() call increments snapshot_depth and stores
+ * a snapshot in snapshot_stack[snapshot_depth]. Each ExecutorEnd/discard pop() call
+ * decrements snapshot_depth after analyzing the frame.
+ * 
+ * Max depth 16 is sufficient for any real PL/pgSQL call chain.
  * 
  * ===== Memory Context Note =====
- * We have to take the before-snapshot in MemCheckHooksContext context under TopMemoryContext
- * because before_snapshot will be palloc'd in various places like planner_hook, ExecutorStart_hook.
- * And planner_hook is under MessageContext and ExecutorStart_hook is under some other context making
- * before-snapshot's context non-deterministic if we allocate it in the hook itself.  By using a fixed context
- * for before_snapshot, we ensure it is always allocated in a long-lived context that outlives the hooks 
- * and the query execution.
+ * We allocate snapshots in MemCheckHooksContext (under TopMemoryContext) so the
+ * snapshots are long-lived and deterministic regardless of where the hook runs
+ * (planner_hook runs in MessageContext, ExecutorStart_hook in varying contexts).
  */
-static CtxTree *before_snapshot = NULL;
+static SnapshotFrame snapshot_stack[MEMCHECK_SNAPSHOT_STACK_MAX];
+static int           snapshot_depth = 0;
 
 /*
  * Library basename(s) of the hooks that were installed before ours, resolved
@@ -481,21 +488,101 @@ analyze_and_log_diff(CtxDiff *diff)
 }
 
 /*
+ * snapshot_stack_push
+ *
+ * Pushes a new frame onto the snapshot stack. Allocates a fresh before-snapshot
+ * in memcheck_hooks_ctx and stores the current hook library attribution in the frame.
+ * Returns true on success, false if the stack is full (depth >= MAX).
+ *
+ * When false is returned, the snapshot_depth is NOT incremented, so the corresponding
+ * pop() will not execute (gated on snapshot_depth > 0).
+ */
+static bool
+snapshot_stack_push(void)
+{
+    SnapshotFrame *frame;
+    MemoryContext  old_ctx;
+
+    if (snapshot_depth >= MEMCHECK_SNAPSHOT_STACK_MAX)
+    {
+        ereport(WARNING,
+                (errmsg("pg_ext_memcheck: snapshot stack full at depth %d; "
+                        "outer query will not be analyzed", snapshot_depth)));
+        return false;
+    }
+
+    frame = &snapshot_stack[snapshot_depth];
+
+    resolve_active_hook_libs();
+    memcpy(frame->hook_libs, active_hook_libs, sizeof(frame->hook_libs));
+
+    old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
+    frame->snapshot = snapshot_context_tree(TopMemoryContext);
+    MemoryContextSwitchTo(old_ctx);
+
+    snapshot_depth++;   /* increment AFTER successful allocation */
+    return true;
+}
+
+/*
+ * snapshot_stack_pop
+ *
+ * Pops the top frame from the snapshot stack. Takes the after-snapshot,
+ * diffs it against the frame's before-snapshot, logs violations, and cleans up.
+ * Stamps active_hook_libs during diff analysis so violations carry the correct
+ * source attribution (single-threaded backend: safe).
+ */
+static void
+snapshot_stack_pop(CtxTree *after)
+{
+    SnapshotFrame *frame;
+    CtxDiff       *diffs = NULL;
+    int            diff_count = 0, i;
+
+    if (snapshot_depth <= 0)
+        return;
+
+    snapshot_depth--;
+    frame = &snapshot_stack[snapshot_depth];
+
+    /* Stamp global so analyze_and_log_diff / check_wrong_context_alloc see
+     * this frame's attribution while they run. */
+    memcpy(active_hook_libs, frame->hook_libs, sizeof(active_hook_libs));
+
+    diffs = diff_context_trees(frame->snapshot, after, &diff_count);
+    for (i = 0; i < diff_count; i++)
+        analyze_and_log_diff(&diffs[i]);
+
+    check_wrong_context_alloc(frame->snapshot, after);
+
+    free_context_tree(frame->snapshot);
+    free_context_diff(diffs);
+
+    frame->snapshot     = NULL;
+    frame->hook_libs[0] = '\0';
+    active_hook_libs[0] = '\0';
+}
+
+/*
  * memcheck_discard_outer_hook_snapshot
  *
- * Frees and NULLs the before_snapshot that was taken by the planner or
- * ExecutorStart hook for the currently-running SQL function call.  This
- * prevents ExecutorEnd from comparing before (pre-function) vs after
- * (post-function) and re-logging all violations that the function already
- * reported under its own source_lib attribution.
+ * Pops the top frame from the snapshot stack (if any) without analyzing it.
+ * Called before a scenario runs so it doesn't compare against outer context state.
+ * This prevents re-logging violations that the scenario itself will report.
  */
 void
 memcheck_discard_outer_hook_snapshot(void)
 {
-    if (before_snapshot != NULL)
+    if (snapshot_depth > 0)
     {
-        free_context_tree(before_snapshot);
-        before_snapshot = NULL;
+        snapshot_depth--;
+        if (snapshot_stack[snapshot_depth].snapshot != NULL)
+        {
+            free_context_tree(snapshot_stack[snapshot_depth].snapshot);
+            snapshot_stack[snapshot_depth].snapshot = NULL;
+        }
+        snapshot_stack[snapshot_depth].hook_libs[0] = '\0';
+        active_hook_libs[0] = '\0';   /* fixes pre-existing bug: was never cleared here */
     }
 }
 
@@ -543,25 +630,9 @@ void memcheck_executor_start(QueryDesc *queryDesc, int eflags) {
         return; 
     }
 
-    // For EXECUTOR mode, take a before-snapshot of the context tree 
-    // at the start of the query execution.
+    // For EXECUTOR mode, push a snapshot frame onto the stack
     if (memcheck_mode == MEMCHECK_EXECUTOR && !memcheck_in_internal_query)
-    {
-        MemoryContext old_ctx;
-
-        /* Free any stale snapshot left by a previous query that errored between
-         * ExecutorStart and ExecutorEnd (the end hook never ran to clean up). */
-        if (before_snapshot != NULL)
-        {
-            free_context_tree(before_snapshot);
-            before_snapshot = NULL;
-        }
-
-        resolve_active_hook_libs();
-        old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
-        before_snapshot = snapshot_context_tree(TopMemoryContext);
-        MemoryContextSwitchTo(old_ctx);
-    }
+        snapshot_stack_push();
 }
 
 // Memcheck Executor End Hook Implementation
@@ -574,74 +645,41 @@ void memcheck_executor_end(QueryDesc *queryDesc) {
         standard_ExecutorEnd(queryDesc); 
     }
     
-    // If mode is NONE, do not analyze — but still free any snapshot that was taken
-    // at the start of this query (e.g., end() set mode=NONE mid-execution).
-    // Leaving before_snapshot non-NULL would create a dangling pointer once the
-    // query's memory context is reset, corrupting the heap on the next access.
-    if (memcheck_mode == MEMCHECK_NONE) {
-        if (before_snapshot != NULL) {
-            free_context_tree(before_snapshot);
-            before_snapshot = NULL;
+    // If mode is NONE, drain the snapshot stack (recovers all frames left by aborted nested queries)
+    if (memcheck_mode == MEMCHECK_NONE)
+    {
+        while (snapshot_depth > 0)
+        {
+            snapshot_depth--;
+            if (snapshot_stack[snapshot_depth].snapshot != NULL)
+            {
+                free_context_tree(snapshot_stack[snapshot_depth].snapshot);
+                snapshot_stack[snapshot_depth].snapshot = NULL;
+            }
+            snapshot_stack[snapshot_depth].hook_libs[0] = '\0';
         }
         return;
     }
 
-    // For EXECUTOR/ALL mode, take an after-snapshot of the context tree at the end of the query execution,
-    // compare it with the before-snapshot, and log any differences as violations.
-    if ((memcheck_mode == MEMCHECK_EXECUTOR || memcheck_mode == MEMCHECK_ALL) && !memcheck_in_internal_query &&
-        before_snapshot != NULL)
+    // For EXECUTOR/ALL mode, pop the stack frame: take after-snapshot, diff, log violations
+    if ((memcheck_mode == MEMCHECK_EXECUTOR || memcheck_mode == MEMCHECK_ALL) &&
+        !memcheck_in_internal_query &&
+        snapshot_depth > 0)
     {
-        int      diff_count = 0;
-        CtxDiff *diffs      = NULL;
-        CtxTree *after      = snapshot_context_tree(TopMemoryContext);
-        int      i;
-
-        // Compute the differences between before and after snapshots
-        diffs = diff_context_trees(before_snapshot, after, &diff_count);
-
-        /* Analyze each diff entry and write qualifying violations to shared memory */
-        for (i = 0; i < diff_count; i++)
-            analyze_and_log_diff(&diffs[i]);
-
-        // Check for wrong context allocations in known global contexts and new contexts created under global parents, 
-        // which are common patterns of wrong context usage that can lead to memory leaks across queries.
-        check_wrong_context_alloc(before_snapshot, after);
-
-        // Clean up snapshots and diffs to avoid memory leaks in the extension itself
-        free_context_tree(before_snapshot);
+        CtxTree *after = snapshot_context_tree(TopMemoryContext);
+        snapshot_stack_pop(after);
         free_context_tree(after);
-        free_context_diff(diffs);
-        before_snapshot = NULL;
-        active_hook_libs[0] = '\0';
     }
 }
 
 // Memcheck Planner Hook Implementation
 PlannedStmt *memcheck_planner_hook(Query *parse, const char *query_string, int cursorOptions, ParamListInfo boundParams) {
     // In ALL mode, Memory contexts allocated during planning are also tracked.
-    // So we take a before-snapshot at the start of the planner hook, 
+    // So we push a snapshot frame at the start of the planner hook, 
     // and the after-snapshot and diff analysis will be done in the ExecutorEnd hook.
     // Means ALL = PLANNER + EXECUTOR, while EXECUTOR = only Executor hooks.
-    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query) {
-        MemoryContext old_ctx;
-
-        /* Free any stale snapshot left by a previous query that errored between
-         * planner_hook and ExecutorEnd (the end hook never ran to clean up).
-         * The before_snapshot == NULL guard was removed: reusing a stale snapshot
-         * produces a bogus diff for the next query, which is worse than the
-         * existing documented limitation that nested-query outer analysis is
-         * skipped when the inner ExecutorEnd clears the pointer. */
-        if (before_snapshot != NULL)
-        {
-            free_context_tree(before_snapshot);
-            before_snapshot = NULL;
-        }
-
-        resolve_active_hook_libs();
-        old_ctx = MemoryContextSwitchTo(memcheck_hooks_ctx);
-        before_snapshot = snapshot_context_tree(TopMemoryContext);
-        MemoryContextSwitchTo(old_ctx);
-    }
+    if (memcheck_mode == MEMCHECK_ALL && !memcheck_in_internal_query)
+        snapshot_stack_push();
 
     if (prev_planner_hook)
         return prev_planner_hook(parse, query_string, cursorOptions, boundParams);
