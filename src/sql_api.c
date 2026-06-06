@@ -494,8 +494,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
     char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
     CtxTree *before_snapshot_tree = NULL;
-    CtxTree *after_snapshot_tree;
-    CtxDiff *diffs;
+    CtxTree *after_snapshot_tree  = NULL;
+    CtxDiff *diffs                = NULL;
     int      diff_count;
     int      i;
     bool     run_leak_diff;   /* analyze_and_log_diff -> context_leak */
@@ -599,6 +599,10 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     }
 
     active_hook_libs[0] = '\0';
+
+    free_context_tree(before_snapshot_tree);
+    free_context_tree(after_snapshot_tree);
+    free_context_diff(diffs);
 
     PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
 }
