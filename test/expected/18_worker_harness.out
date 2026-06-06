@@ -22,8 +22,8 @@ SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
 INFO:  Running memory check scenario: use_after_reset
 INFO:  Iterations: 1
 INFO:  Workload: SELECT 1
-                                                                                         run_scenario                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                             run_scenario                                              
+-------------------------------------------------------------------------------------------------------
  Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
 (1 row)
 
@@ -49,8 +49,8 @@ SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
 INFO:  Running memory check scenario: oom_simulation
 INFO:  Iterations: 1
 INFO:  Workload: SELECT 1
-                                                                                         run_scenario                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                             run_scenario                                              
+-------------------------------------------------------------------------------------------------------
  Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
 (1 row)
 
