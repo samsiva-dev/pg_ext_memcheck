@@ -25,7 +25,7 @@ Phase 1 focuses on the bugs that hurt extension authors most often and that no e
 
 Phase 2 adds probes that require process isolation:
 
-- **BGWorker crash harness** — run crash-inducing scenarios in an isolated background worker to protect the test session
+- **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via exit code, not by propagating SIGSEGV to the test session
 - **Stress scenario catalog** — expanded parameterized scenarios (reset storm, concurrent backends, and more)
 
 ## Known limitations
@@ -36,5 +36,4 @@ Phase 2 adds probes that require process isolation:
 | PG 15+ only | Relies on `MemoryContextData` layout introduced in PG 15 |
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
-| Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
 | `all`-mode skips non-planned statements | In `all` mode the before-snapshot is taken in `planner_hook`. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, `SET`, etc.) bypass both hooks, so neither is analyzed. Use `executor` mode if you need every executor invocation bracketed. |

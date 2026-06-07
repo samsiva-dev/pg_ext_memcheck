@@ -24,7 +24,7 @@ pg_ext_memcheck is a standard PostgreSQL extension (`.so` loaded via `shared_pre
 │          ▼                                           │
 │   SQL: flush_violations() ──► violations table       │
 │                                                      │
-│  worker_harness.c  (background worker, Phase 2)      │
+│  worker_harness.c  (BGWorker crash harness)           │
 │  gucs.c            (GUC parameters)                  │
 └─────────────────────────────────────────────────────┘
 ```
@@ -42,6 +42,8 @@ The entry point. Registers `ExecutorStart_hook`, `ExecutorEnd_hook`, and `planne
 3. **ExecutorEnd** → calls `context_walker` for a post-snapshot, runs the context-diff, passes `context_leak` violations to `violation_log`, and runs `check_wrong_context_alloc()` to detect `wrong_ctx_alloc` violations.
 
 In `EXECUTOR` mode only the executor hooks are active. In `ALL` mode the planner hook fires first, giving broader coverage of planning-phase allocations.
+
+**Nested query support:** Pre-snapshots are stored in a fixed-depth stack (`snapshot_stack[16]`) rather than a single pointer. Each `ExecutorStart`/`planner_hook` call pushes a new frame; each `ExecutorEnd` pops and analyzes it. This allows nested SQL (e.g. PL/pgSQL functions calling SQL) to be correctly tracked up to 16 levels deep without the outer query's snapshot being clobbered by the inner `ExecutorEnd`.
 
 **Targeting state** is stored as module-level variables set by `memcheck_begin()` and cleared by `memcheck_end()`:
 
@@ -126,9 +128,24 @@ Maintains a shared-memory `DsmTrackerState` table of observed DSM handles (manua
 
 ---
 
-### worker_harness.c *(Phase 2)*
+### worker_harness.c
 
-A `BackgroundWorker` process that accepts scenario run requests via a shared message queue. Runs the target function in isolation so that crash-inducing scenarios (use-after-reset simulation, shmem overrun probes) cannot crash the client backend. Reports results back through the violation log.
+A `BackgroundWorker` that runs crash-inducing scenarios (`use_after_reset`, `oom_simulation`) in an isolated process so that SIGSEGV or OOM cannot kill the calling session.
+
+Communication uses a shared-memory `WorkerSlot`:
+
+```c
+typedef struct WorkerSlot {
+    LWLock       lock;
+    WorkerStatus status;          /* IDLE | RUNNING | DONE | CRASHED */
+    char         scenario[64];    /* e.g. "use_after_reset" */
+    char         database[NAMEDATALEN];
+    int          requestor_pid;
+    int          exit_code;       /* non-zero → crash detected */
+} WorkerSlot;
+```
+
+`launch_crash_isolation_worker()` fills the slot, registers a `BackgroundWorker`, and blocks on `WaitForBackgroundWorkerShutdown()`. After the worker exits, a non-zero `exit_code` signals a confirmed crash. The worker uses `elog(FATAL)` rather than triggering a true SIGSEGV so the postmaster does not initiate cluster-wide crash recovery.
 
 ---
 

@@ -16,7 +16,7 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 | Wrong-context palloc | ✗ | ✗ | ✓ |
 | Shmem boundary overrun | ± | ± | ✓ |
 | DSM segment leak | ✗ | ✗ | ± (manual, cross-session only) |
-| Use-after-reset bug | ✗ | ✗ | ✗ *(Phase 2)* |
+| Use-after-reset bug | ✗ | ✗ | ✓ (BGWorker crash-isolated) |
 | Context growth / bloat | ✗ | ✗ | ✓ |
 | Heap use-after-free | ✓ | ✓ | ✗ |
 
@@ -29,7 +29,7 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
 - **Context bloat** — Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
 - **Shmem overruns** — Plants sentinel bytes around shared memory allocations and verifies their integrity after extension code runs.
 - **DSM lifecycle** — Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
-- **Use-after-reset** *(Phase 2)* — Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
+- **Use-after-reset / OOM simulation** — Runs crash-inducing scenarios (`use_after_reset`, `oom_simulation`) in an isolated BGWorker process so SIGSEGV or OOM cannot kill the calling session.
 
 ---
 
@@ -124,7 +124,7 @@ Growth is classified as **superlinear** when the per-iteration rate in the final
 
 ## Stress scenarios
 
-`growth_benchmark`, `tx_abort_loop`, and `shmem_sentinel_probe` are Phase 1 scenarios available now. `wrong_context_probe` is a Phase 2 scenario that is now implemented. Additional Phase 2 scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are still planned.
+Six scenarios are available. `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` run in-process. `use_after_reset` and `oom_simulation` run in a crash-isolated BGWorker so SIGSEGV/OOM cannot kill the calling session. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are still planned.
 
 ```sql
 -- Measures per-context bloat at log-spaced checkpoints; emits ctx_bloat violations
@@ -139,6 +139,12 @@ SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
 -- Focused wrong-context allocation check — skips context_leak diff, runs only wrong_ctx_alloc detection
 SELECT ext_memcheck.run_scenario('wrong_context_probe', 50, 'SELECT your_extension.some_function(''input'')');
 
+-- Run use-after-reset in a BGWorker; detects crash via non-zero exit code
+SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
+
+-- Allocate until OOM in a BGWorker; detects crash via non-zero exit code
+SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
+
 SELECT ext_memcheck.flush_violations();
 ```
 
@@ -148,6 +154,8 @@ SELECT ext_memcheck.flush_violations();
 | `tx_abort_loop` | Context leaks that only manifest on transaction abort; resources not cleaned up on rollback |
 | `shmem_sentinel_probe` | Off-by-one writes past a segment's declared shmem boundary |
 | `wrong_context_probe` | Allocations that land in `TopMemoryContext`, `CacheMemoryContext`, or other long-lived contexts; emits `wrong_ctx_alloc` violations only — `context_leak` diff is intentionally skipped |
+| `use_after_reset` | Crash via use-after-reset dereference, detected through BGWorker exit code (non-zero = crash confirmed) |
+| `oom_simulation` | OOM crash by exhausting palloc until failure, detected through BGWorker exit code |
 
 ---
 
@@ -244,7 +252,7 @@ pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_librar
 │          ▼                                           │
 │   SQL: flush_violations() ──► violations table       │
 │                                                      │
-│  worker_harness.c  (background worker, Phase 2)      │
+│  worker_harness.c  (BGWorker crash harness)           │
 │  gucs.c            (GUC parameters)                  │
 └─────────────────────────────────────────────────────┘
 ```
@@ -259,7 +267,7 @@ pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_librar
 | `shmem_probe.c` | Plants `0xDE` sentinel bytes past shmem boundaries; detects overruns post-workload |
 | `dsm_tracker.c` | Records DSM attach/detach events; flags unreleased handles at window close |
 | `gucs.c` | Defines all `pg_ext_memcheck.*` GUC parameters |
-| `worker_harness.c` | Background worker for crash-isolated scenario execution *(Phase 2)* |
+| `worker_harness.c` | BGWorker that runs crash-inducing scenarios (`use_after_reset`, `oom_simulation`) in an isolated process; communicates result via `WorkerSlot` shared memory |
 | `sql_api.c` | Implements all `ext_memcheck.*` SQL-callable functions |
 
 ---
@@ -280,7 +288,6 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 | PG 15+ only | Relies on `MemoryContextData` layout introduced in PG 15 |
 | Context name collisions | Named context matching can fail if two contexts share a name |
 | Single-backend view | Phase 1 does not observe allocations in other backend processes |
-| Nested query blind spot | `before_snapshot` is a single pointer; nested SQL (e.g. PL/pgSQL calling SQL) causes the inner `ExecutorEnd` to clear it, so the outer query is silently not analyzed |
 | `all`-mode skips non-planned statements | In `all` mode the before-snapshot is taken in `planner_hook`. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, `SET`, etc.) bypass both hooks, so neither is analyzed. Use `executor` mode if you need every executor invocation bracketed. |
 
 ---
@@ -289,7 +296,7 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 
 **Phase 1 (current):** Context leak detection, wrong-context allocation detection, monotonic context-bloat detection with linear / superlinear shape classification, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
 
-**Phase 2 (in progress):** `wrong_context_probe` scenario ✓. BGWorker crash harness, remaining stress scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`).
+**Phase 2 (in progress):** `wrong_context_probe` scenario ✓. BGWorker crash harness ✓ (`use_after_reset`, `oom_simulation`). Remaining stress scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) still planned.
 
 See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
 
