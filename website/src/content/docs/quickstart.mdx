@@ -127,10 +127,36 @@ SELECT ext_memcheck.flush_violations();
 
 ## GUC parameters
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `pg_ext_memcheck.memcheck_mode` | `enum` | `none` | `all` / `executor` / `none` — controls which execution phases are hooked. See [API reference](/api/#pg_ext_memcheckmemcheck_mode). |
-| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Context growth smaller than this (in bytes) is silently ignored. |
+<table>
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      <th>Type</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>pg_ext_memcheck.memcheck_mode</code></td>
+      <td><code>enum</code></td>
+      <td><code>none</code></td>
+      <td><code>all</code> / <code>executor</code> / <code>none</code> — controls which execution phases are hooked. See <a href="/api/#pg_ext_memcheckmemcheck_mode">API reference</a>.</td>
+    </tr>
+    <tr>
+      <td><code>pg_ext_memcheck.min_leak_bytes</code></td>
+      <td><code>int</code></td>
+      <td><code>8192</code></td>
+      <td>Context growth smaller than this (in bytes) is silently ignored by the leak detector.</td>
+    </tr>
+    <tr>
+      <td><code>pg_ext_memcheck.bloat_min_bytes</code></td>
+      <td><code>int</code></td>
+      <td><code>8192</code></td>
+      <td>Minimum cumulative growth (in bytes) for a context to be reported as bloating by <code>growth_benchmark</code>.</td>
+    </tr>
+  </tbody>
+</table>
 
 `memcheck_mode` controls **which phases** are hooked; the `ext_context_pattern` argument to `begin()` controls **which contexts** are reported. Set the GUC once for the session:
 

@@ -294,9 +294,9 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 
 ## Roadmap
 
-**Phase 1 (current):** Context leak detection, wrong-context allocation detection, monotonic context-bloat detection with linear / superlinear shape classification, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
+**Phase 1 (complete):** Context leak detection, wrong-context allocation detection, monotonic context-bloat detection with linear / superlinear shape classification, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
 
-**Phase 2 (in progress):** `wrong_context_probe` scenario ✓. BGWorker crash harness ✓ (`use_after_reset`, `oom_simulation`). Remaining stress scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) still planned.
+**Phase 2 (in progress):** `wrong_context_probe` scenario ✓, BGWorker crash harness ✓ (`use_after_reset`, `oom_simulation`). Remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) still planned.
 
 See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
 
