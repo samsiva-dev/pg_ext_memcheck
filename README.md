@@ -261,7 +261,7 @@ pg_ext_memcheck is composed of eight C modules loaded via `shared_preload_librar
 
 | Module | Role |
 |---|---|
-| `memcheck_hooks.c` | Registers `ExecutorStart`, `ExecutorEnd`, and `planner_hook`; brackets every query with pre/post snapshots |
+| `memcheck_hooks.c` | Registers `ExecutorStart`, `ExecutorEnd`, and `planner_hook`; brackets every query with pre/post snapshots. Pre-snapshots are stored in a 16-level stack so nested queries (e.g. PL/pgSQL calling SQL) are tracked correctly without clobbering the outer query's snapshot. |
 | `context_walker.c` | Walks the `MemoryContext` tree; produces snapshots and diffs them to find leaks and bloat |
 | `violation_log.c` | Manages the 2048-entry shared ring buffer (LWLock-protected); `end()` drains per-session, `flush_violations()` drains all-backends |
 | `shmem_probe.c` | Plants `0xDE` sentinel bytes past shmem boundaries; detects overruns post-workload |

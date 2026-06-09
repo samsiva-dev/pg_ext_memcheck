@@ -166,15 +166,23 @@ detail:         "DSM segment handle ... was attached but not detached (size=... 
 
 ---
 
-## Use-after-reset simulation
+## Use-after-reset / OOM simulation
 
-<Aside type="note" title="Phase 2">
-  This feature is planned for Phase 2. See the [Roadmap](/roadmap/).
-</Aside>
+These scenarios run in a crash-isolated BGWorker process so SIGSEGV or OOM cannot kill the calling session.
 
-`MemoryContextReset()` frees all allocations within a context without deleting the context itself. Extension code that holds a raw pointer into a reset context will dereference freed memory — a bug that only manifests under specific timing conditions in production.
+**`use_after_reset`** — Runs the crash scenario inside a BGWorker that calls `elog(FATAL)` to simulate a use-after-reset crash. The worker exits with a non-zero exit code; the calling backend detects this via `WorkerSlot.exit_code` and logs the result. Verifies that the crash-isolation infrastructure works correctly before you run your own crash-inducing code.
 
-**How it works:** The `worker_harness.c` background worker runs the extension function, forces a `MemoryContextReset()` on designated contexts mid-execution, then re-invokes the function. Crashes are caught by the worker isolation boundary and reported as `use_after_reset` violations.
+**`oom_simulation`** — Allocates 1 MiB chunks via `palloc_extended(MCXT_ALLOC_NO_OOM)` inside a BGWorker until the allocator returns NULL (or 256 MiB are consumed), then exits with `elog(FATAL)`. Confirms that an extension's OOM behavior is crash-detected in isolation without affecting the test session.
+
+```sql
+-- Run use-after-reset in a BGWorker; detects crash via non-zero exit code
+SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
+SELECT ext_memcheck.flush_violations();
+
+-- Allocate until OOM in a BGWorker; detects crash via non-zero exit code
+SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
+SELECT ext_memcheck.flush_violations();
+```
 
 ---
 

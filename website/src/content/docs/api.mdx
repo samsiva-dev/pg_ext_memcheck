@@ -340,4 +340,4 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 | `shmem_overrun` | 1 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
 | `dsm_leak` | 1 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
 | `ctx_bloat` | 1 | Available | A `MemoryContext` grew monotonically across two or more log-spaced checkpoints in a `growth_benchmark` run. Severity reflects total growth; superlinear acceleration bumps severity one level. |
-| `use_after_reset` | 2 | Planned | Extension function crashed or produced incorrect results after a forced `MemoryContextReset()`. |
+| `use_after_reset` | 2 | Available | BGWorker crash confirmed via non-zero exit code after `elog(FATAL)` in an isolated worker process. |
