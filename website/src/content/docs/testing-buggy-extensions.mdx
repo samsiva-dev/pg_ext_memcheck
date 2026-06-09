@@ -90,12 +90,17 @@ After 1000 iterations the accumulated leaks cross multiple severity thresholds. 
 
 #### Severity thresholds recap
 
-| Threshold | Severity |
-|-----------|----------|
-| > 1 MiB net used growth | `ERROR` |
-| > 64 KiB net used growth | `WARNING` |
-| ≥ `min_leak_bytes` (default 8 KiB) | `INFO` |
-| Below threshold | silently skipped |
+<table>
+  <thead>
+    <tr><th>Threshold</th><th>Severity</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>&gt; 1 MiB net used growth</td><td><code>ERROR</code></td></tr>
+    <tr><td>&gt; 64 KiB net used growth</td><td><code>WARNING</code></td></tr>
+    <tr><td>≥ <code>min_leak_bytes</code> (default 8 KiB)</td><td><code>INFO</code></td></tr>
+    <tr><td>Below threshold</td><td>silently skipped</td></tr>
+  </tbody>
+</table>
 - The `TopMemoryContext` leak has grown to `8.2MB` after 1000 iterations, which is now an `ERROR`.
 - The `wrong_ctx_alloc` violation always a `WARNING` to indicate a potential issue with the extension's allocation strategy, independent of the actual leak size.
 - The `BuggyPlannerLeakCtx` remains an `INFO` because it is still under `64KB`, but you can see how it grows across iterations.

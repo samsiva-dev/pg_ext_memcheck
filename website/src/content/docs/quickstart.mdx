@@ -96,14 +96,19 @@ SELECT * FROM ext_memcheck.end();
 
 A violation row looks like this:
 
-| Column | Example |
-|---|---|
-| `ts` | `2026-05-10 14:32:01 UTC` |
-| `backend_pid` | `12345` |
-| `detail` | `"Context present in post-query snapshot but not pre-query"` |
-| `severity` | `WARNING`, `INFO`, `ERROR` |
-| `check_type` | `context_leak`, `wrong_ctx_alloc`, `shmem_overrun`, etc. |
-| `source_lib` | `your_extension.dylib` |
+<table>
+  <thead>
+    <tr><th>Column</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ts</code></td><td><code>2026-05-10 14:32:01 UTC</code></td></tr>
+    <tr><td><code>backend_pid</code></td><td><code>12345</code></td></tr>
+    <tr><td><code>detail</code></td><td><code>"Context present in post-query snapshot but not pre-query"</code></td></tr>
+    <tr><td><code>severity</code></td><td><code>WARNING</code>, <code>INFO</code>, <code>ERROR</code></td></tr>
+    <tr><td><code>check_type</code></td><td><code>context_leak</code>, <code>wrong_ctx_alloc</code>, <code>shmem_overrun</code>, etc.</td></tr>
+    <tr><td><code>source_lib</code></td><td><code>your_extension.dylib</code></td></tr>
+  </tbody>
+</table>
 
 ## Run a built-in stress scenario
 

@@ -149,13 +149,18 @@ SELECT ext_memcheck.clear_dsm_tracking();
 
 **DSM tracking table columns:**
 
-| Column | Type | Description |
-|---|---|---|
-| `segid` | `bigint` | DSM handle (OS-level identifier) |
-| `backend_pid` | `int` | PID of the backend that attached the segment |
-| `attach_at` | `timestamptz` | When the segment was recorded |
-| `size_bytes` | `bigint` | Segment size in bytes |
-| `detached` | `boolean` | Whether a matching detach was observed |
+<table>
+  <thead>
+    <tr><th>Column</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>segid</code></td><td><code>bigint</code></td><td>DSM handle (OS-level identifier)</td></tr>
+    <tr><td><code>backend_pid</code></td><td><code>int</code></td><td>PID of the backend that attached the segment</td></tr>
+    <tr><td><code>attach_at</code></td><td><code>timestamptz</code></td><td>When the segment was recorded</td></tr>
+    <tr><td><code>size_bytes</code></td><td><code>bigint</code></td><td>Segment size in bytes</td></tr>
+    <tr><td><code>detached</code></td><td><code>boolean</code></td><td>Whether a matching detach was observed</td></tr>
+  </tbody>
+</table>
 
 pg_ext_memcheck will report:
 ```
@@ -199,11 +204,16 @@ Measures per-`MemoryContext` used bytes at **log-spaced checkpoints** across rep
 
 **Severity levels:**
 
-| Level | Base condition | Escalation |
-|---|---|---|
-| `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear |
-| `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear |
-| `INFO` | Total growth ≥ `bloat_min_bytes` | — |
+<table>
+  <thead>
+    <tr><th>Level</th><th>Base condition</th><th>Escalation</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ERROR</code></td><td>Total growth &gt; 1 MiB</td><td>or <code>WARNING</code> + superlinear</td></tr>
+    <tr><td><code>WARNING</code></td><td>Total growth &gt; 64 KiB</td><td>or <code>INFO</code> + superlinear</td></tr>
+    <tr><td><code>INFO</code></td><td>Total growth ≥ <code>bloat_min_bytes</code></td><td>—</td></tr>
+  </tbody>
+</table>
 
 ```sql
 SELECT ext_memcheck.run_scenario('growth_benchmark', 500, 'SELECT your_ext.fn()');
