@@ -37,7 +37,9 @@ REGRESS = \
 	13_shmem_sentinel_probe \
 	14_context_pattern_filter \
 	15_buggy_ext_wrong_ctx_detection \
-	16_buggy_ext_dsm_leak_detection 
+	16_buggy_ext_dsm_leak_detection \
+	17_nested_query_analysis \
+	18_worker_harness 
 
 REGRESS_OPTS = --inputdir=test --outputdir=test
 

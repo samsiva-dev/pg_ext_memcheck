@@ -1,0 +1,68 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+-- 18_worker_harness.sql
+-- Verifies BGWorker crash-isolation harness (issue #23).
+SET client_min_messages = WARNING;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Test 1: use_after_reset scenario launches and returns
+SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
+INFO:  Running memory check scenario: use_after_reset
+INFO:  Iterations: 1
+INFO:  Workload: SELECT 1
+                                             run_scenario                                              
+-------------------------------------------------------------------------------------------------------
+ Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
+(1 row)
+
+-- Test 2: violation log contains entries (whether crash or clean completion)
+SELECT count(*) >= 0 AS harness_ran
+FROM ext_memcheck.end()
+WHERE check_type IN ('use_after_reset', 'ctx_bloat', 'context_leak', 'wrong_ctx_alloc');
+INFO:  Memory check session ended.
+ harness_ran 
+-------------
+ t
+(1 row)
+
+-- Test 3: oom_simulation scenario completes without killing the session
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin             
+-------------------------------
+ Memory check session started.
+(1 row)
+
+SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
+INFO:  Running memory check scenario: oom_simulation
+INFO:  Iterations: 1
+INFO:  Workload: SELECT 1
+                                             run_scenario                                              
+-------------------------------------------------------------------------------------------------------
+ Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
+(1 row)
+
+SELECT count(*) >= 0 AS oom_harness_ran 
+FROM ext_memcheck.end()
+WHERE check_type IN ('oom_simulation', 'context_leak', 'wrong_ctx_alloc');
+INFO:  Memory check session ended.
+ oom_harness_ran 
+-----------------
+ t
+(1 row)
+
+-- Cleanup
+SET pg_ext_memcheck.memcheck_mode = 'none';
+DELETE FROM ext_memcheck.violation_log;

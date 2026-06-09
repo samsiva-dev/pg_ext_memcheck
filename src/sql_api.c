@@ -74,6 +74,8 @@ static void run_growth_benchmark(int iterations, const char *workload);
 static void run_tx_abort_loop(int iterations, const char *workload);
 static void run_shmem_sentinel_probe(int iterations, const char *workload);
 static void run_wrong_context_probe(int iterations, const char *workload);
+static void run_use_after_reset(int iterations, const char *workload);
+static void run_oom_simulation(int iterations, const char *workload);
 static Size ctx_used_bytes(const CtxSnapshot *s);
 static int build_checkpoints(int iterations, int *ckpts);
 static void record_checkpoint(BloatSeries **series, int *count, int *cap,
@@ -492,8 +494,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     text    *workload_text = PG_NARGS() > 2 ? PG_GETARG_TEXT_PP(2) : NULL;
     char    *workload_str  = workload_text ? text_to_cstring(workload_text) : "SELECT 1";
     CtxTree *before_snapshot_tree = NULL;
-    CtxTree *after_snapshot_tree;
-    CtxDiff *diffs;
+    CtxTree *after_snapshot_tree  = NULL;
+    CtxDiff *diffs                = NULL;
     int      diff_count;
     int      i;
     bool     run_leak_diff;   /* analyze_and_log_diff -> context_leak */
@@ -515,9 +517,11 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
 
     /*
      * Each scenario selects exactly which generic checks run after the workload:
-     *   growth_benchmark    -> ctx_bloat only (owns its own checkpointed analysis)
-     *   wrong_context_probe -> wrong_ctx_alloc only
-     *   everything else     -> context_leak + wrong_ctx_alloc
+     *   growth_benchmark        -> ctx_bloat only (owns its own checkpointed analysis)
+     *   wrong_context_probe     -> wrong_ctx_alloc only
+     *   use_after_reset         -> none (BGWorker handles internally)
+     *   oom_simulation          -> none (BGWorker handles internally)
+     *   everything else         -> context_leak + wrong_ctx_alloc
      */
     if (strcmp(scenario_str, "growth_benchmark") == 0) {
         run_leak_diff = false;
@@ -525,6 +529,10 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
         run_leak_diff = false;
         run_wrong_ctx = true;
+    } else if (strcmp(scenario_str, "use_after_reset") == 0 ||
+               strcmp(scenario_str, "oom_simulation") == 0) {
+        run_leak_diff = false;
+        run_wrong_ctx = false;
     } else {
         run_leak_diff = true;
         run_wrong_ctx = true;
@@ -555,6 +563,10 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
             run_shmem_sentinel_probe(iterations, workload_str);
         } else if (strcmp(scenario_str, "wrong_context_probe") == 0) {
             run_wrong_context_probe(iterations, workload_str);
+        } else if (strcmp(scenario_str, "use_after_reset") == 0) {
+            run_use_after_reset(iterations, workload_str);
+        } else if (strcmp(scenario_str, "oom_simulation") == 0) {
+            run_oom_simulation(iterations, workload_str);
         } else {
             memcheck_in_internal_query = false;
             active_hook_libs[0] = '\0';
@@ -587,6 +599,10 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
     }
 
     active_hook_libs[0] = '\0';
+
+    free_context_tree(before_snapshot_tree);
+    free_context_tree(after_snapshot_tree);
+    free_context_diff(diffs);
 
     PG_RETURN_TEXT_P(cstring_to_text("Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations."));
 }
@@ -997,4 +1013,22 @@ clear_dsm_tracking(PG_FUNCTION_ARGS)
     LWLockRelease(&dsm_tracker_state->lock);    
     elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
     PG_RETURN_VOID();
+}
+
+/*
+ * run_use_after_reset -- helper to launch use_after_reset via BGWorker
+ */
+static void
+run_use_after_reset(int iterations, const char *workload)
+{
+    launch_crash_isolation_worker("use_after_reset");
+}
+
+/*
+ * run_oom_simulation -- helper to launch oom_simulation via BGWorker
+ */
+static void
+run_oom_simulation(int iterations, const char *workload)
+{
+    launch_crash_isolation_worker("oom_simulation");
 }

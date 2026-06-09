@@ -142,7 +142,7 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `scenario_name` | `text` | — | Scenario name. All four ship in 0.1.0 Beta: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`. See [Stress Scenarios](/scenarios/). |
+| `scenario_name` | `text` | — | Scenario name. Six scenarios are available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe` (in-process), plus `use_after_reset` and `oom_simulation` (BGWorker crash-isolated). See [Stress Scenarios](/scenarios/). |
 | `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
 | `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
 

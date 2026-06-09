@@ -11,9 +11,13 @@
 #define PG_EXT_MEMCHECK_H 
 
 #include "violation_log.h"
+#include "worker_harness.h"
 
 // Shared Ring Buffer to store violation logs
 extern ViolationLog *violation_log;
+
+// BGWorker crash-isolation harness
+extern WorkerSlot *worker_slot;
 
 /*
  * Set to true when executing a internal query (e.g., SPI queries from within the extension) 

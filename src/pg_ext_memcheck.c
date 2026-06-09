@@ -87,6 +87,9 @@ _PG_init(void)
     install_executor_hooks();
     install_planner_hook();
 
+    /* Initialize BGWorker crash-isolation harness */
+    worker_harness_init();
+
     /* Register backend-exit callback to catch leaks even without an explicit end() */
     on_proc_exit(memcheck_proc_exit_dsm_check, (Datum) 0);
 }
@@ -130,6 +133,7 @@ memcheck_shmem_request(void)
     RequestAddinShmemSpace(sizeof(ViolationLog) + 1);
     RequestAddinShmemSpace(sizeof(DsmTrackerState) + 1);
     RequestAddinShmemSpace(sizeof(ProbeRegistry));
+    RequestAddinShmemSpace(sizeof(WorkerSlot));
     /* Small test segment for register_shmem_probe() integration tests. */
     RequestAddinShmemSpace(SENTINEL_TEST_SEG_SIZE);
 }
@@ -158,6 +162,11 @@ static void memcheck_shmem_startup(void)
     {
         shmem_probe_tranche_id = LWLockNewTrancheId();
         LWLockRegisterTranche(shmem_probe_tranche_id, "pg_ext_memcheck_shmem_probe");
+    }
+    if (worker_harness_tranche_id == 0)
+    {
+        worker_harness_tranche_id = LWLockNewTrancheId();
+        LWLockRegisterTranche(worker_harness_tranche_id, "pg_ext_memcheck_worker_harness");
     }
     violation_log = (ViolationLog *) ShmemInitStruct("pg_ext_memcheck ViolationLog",
                                                       sizeof(ViolationLog) + 1,
@@ -199,5 +208,13 @@ static void memcheck_shmem_startup(void)
             ShmemInitStruct(SENTINEL_TEST_SEG_NAME, SENTINEL_TEST_SEG_SIZE, &found);
         if (!found)
             memset(sentinel_test_ptr, 0, SENTINEL_TEST_SEG_SIZE);
+    }
+
+    /* Allocate shared memory for the BGWorker crash-isolation harness */
+    worker_slot = (WorkerSlot *) ShmemInitStruct("pg_ext_memcheck WorkerSlot",
+                                                  sizeof(WorkerSlot), &found);
+    if (!found) {
+        memset(worker_slot, 0, sizeof(WorkerSlot));
+        LWLockInitialize(&worker_slot->lock, worker_harness_tranche_id);
     }
 }

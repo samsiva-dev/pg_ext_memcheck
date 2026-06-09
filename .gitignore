@@ -11,3 +11,6 @@ test/tmp_pgdata/
 test/results/
 test/regression.diffs
 test/regression.out
+
+.DS_Store
+*.log

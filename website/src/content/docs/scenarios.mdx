@@ -6,7 +6,7 @@ description: The built-in stress scenario catalog for pg_ext_memcheck.
 import { Aside } from '@astrojs/starlight/components';
 
 <Aside type="note" title="Availability">
-  All four scenarios — `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` — ship in 0.1.0 Beta. The remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are deferred to a later release and are not yet implemented.
+  Six scenarios are available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`, `use_after_reset`, and `oom_simulation`. The last two run in a crash-isolated BGWorker process. The remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are deferred to a later release and are not yet implemented.
 </Aside>
 
 Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`. Refer to the [API documentation](/api/#ext_memcheckrun_scenario) for usage details.
@@ -116,6 +116,41 @@ SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'wrong_ctx_alloc';
 **What it catches:** Extension functions that allocate in long-lived contexts (`TopMemoryContext`, `CacheMemoryContext`) instead of query-local contexts — a common source of per-backend memory growth that accumulates silently across sessions.
 
 **When to use over the default executor hook:** The executor hook also calls `check_wrong_context_alloc`, but it does so alongside context-leak detection and only for queries passing through the hook. Use `wrong_context_probe` when you want a clean, isolated signal across N controlled repetitions without unrelated leak noise.
+
+---
+
+## use_after_reset
+
+Runs the `use_after_reset` crash scenario inside a BGWorker process. The worker calls `elog(FATAL)` to simulate a use-after-reset crash, then exits with a non-zero exit code. The calling backend detects the crash via `WorkerSlot.exit_code` and logs the result.
+
+```sql
+SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
+SELECT ext_memcheck.flush_violations();
+```
+
+**How it works:**
+
+1. `launch_crash_isolation_worker("use_after_reset")` fills a shared-memory `WorkerSlot` with the scenario name and current database.
+2. A `BackgroundWorker` is registered and launched. The caller blocks on `WaitForBackgroundWorkerShutdown()`.
+3. The worker calls `run_use_after_reset_in_worker()`, which calls `elog(FATAL)` — a clean `proc_exit(1)` that does not trigger postmaster crash recovery.
+4. The calling backend reads `exit_code != 0` from the slot and reports the confirmed crash.
+
+**What it catches:** Verifies that a known use-after-reset bug produces a crash signal without terminating the test session. Used to validate that crash-isolation infrastructure works correctly.
+
+---
+
+## oom_simulation
+
+Allocates 1 MiB chunks via `palloc_extended(MCXT_ALLOC_NO_OOM)` inside a BGWorker until the allocator returns NULL (or 256 MiB are consumed), then exits with `elog(FATAL)`. The calling backend detects the crash via exit code.
+
+```sql
+SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
+SELECT ext_memcheck.flush_violations();
+```
+
+**How it works:** Mirrors `use_after_reset` but exercises the OOM allocation path. `MCXT_ALLOC_NO_OOM` suppresses the normal `ERROR` and returns `NULL` instead, so the loop can drain available memory to a controlled limit (capped at 256 MB for CI environments with Linux memory overcommit).
+
+**What it catches:** Confirms that an extension's OOM behavior (or simulated OOM) is crash-detected in isolation without affecting the test session or other backends.
 
 ---
 
