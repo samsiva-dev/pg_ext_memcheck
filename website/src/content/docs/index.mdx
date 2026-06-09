@@ -41,7 +41,7 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
     <tr><td>Wrong-context palloc</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
     <tr><td>Shmem boundary overrun</td><td class="partial">±</td><td class="partial">±</td><td class="tick">✓</td></tr>
     <tr><td>DSM segment leak</td><td class="cross">✗</td><td class="cross">✗</td><td class="partial">± (manual, cross-session only)</td></tr>
-    <tr><td>Use-after-reset bug</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗ (Phase 2)</td></tr>
+    <tr><td>Use-after-reset bug</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓ (BGWorker crash-isolated)</td></tr>
     <tr><td>Context growth / bloat</td><td class="cross">✗</td><td class="cross">✗</td><td class="tick">✓</td></tr>
     <tr><td>Heap use-after-free</td><td class="tick">✓</td><td class="tick">✓</td><td class="cross">✗</td></tr>
   </tbody>
@@ -62,8 +62,8 @@ Tools like Valgrind and AddressSanitizer are blind to PostgreSQL's internal memo
   <Card title="✅ DSM lifecycle" icon="document">
     Tracks DSM segment attach and detach calls to detect segments that are attached but never released.
   </Card>
-  <Card title="⬜ Use-after-reset" icon="setting">
-    Forces a context reset then re-invokes the extension function to expose dangling pointer dereferences.
+  <Card title="✅ Use-after-reset / OOM simulation" icon="setting">
+    Runs crash-inducing scenarios (`use_after_reset`, `oom_simulation`) in an isolated BGWorker process so SIGSEGV or OOM cannot kill the calling session. Crash is confirmed via BGWorker exit code.
   </Card>
   <Card title="✅ Context bloat" icon="approve-check-circle">
     Measures monotonic growth across repeated invocations to detect slow, cumulative leaks.
