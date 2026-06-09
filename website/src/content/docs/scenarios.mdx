@@ -37,11 +37,16 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations
 
 **Severity:**
 
-| Level | Base condition | Escalation |
-|---|---|---|
-| `ERROR` | Total growth > 1 MiB | or `WARNING` + superlinear growth |
-| `WARNING` | Total growth > 64 KiB | or `INFO` + superlinear growth |
-| `INFO` | Total growth ≥ `bloat_min_bytes` | — |
+<table>
+  <thead>
+    <tr><th>Level</th><th>Base condition</th><th>Escalation</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ERROR</code></td><td>Total growth &gt; 1 MiB</td><td>or <code>WARNING</code> + superlinear growth</td></tr>
+    <tr><td><code>WARNING</code></td><td>Total growth &gt; 64 KiB</td><td>or <code>INFO</code> + superlinear growth</td></tr>
+    <tr><td><code>INFO</code></td><td>Total growth ≥ <code>bloat_min_bytes</code></td><td>—</td></tr>
+  </tbody>
+</table>
 
 **What it catches:** Slow cumulative leaks that are invisible in single-call tests; monotonic context bloat; accelerating (superlinear) allocation patterns that will exhaust memory under sustained load.
 
@@ -174,10 +179,15 @@ Rapidly and repeatedly resets the current `MemoryContext` between invocations of
 SELECT ext_memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', iterations => 200);
 ```
 
-| Parameter | Default | Description |
-|---|---|---|
-| `iterations` | `50` | Number of invocations |
-| `reset_frequency` | `1` | Reset context every N invocations |
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>iterations</code></td><td><code>50</code></td><td>Number of invocations</td></tr>
+    <tr><td><code>reset_frequency</code></td><td><code>1</code></td><td>Reset context every N invocations</td></tr>
+  </tbody>
+</table>
 
 **What it catches:** Use-after-reset dereferences; context-local data that survives a reset by accident.
 
@@ -191,10 +201,15 @@ Spawns multiple background workers that simultaneously invoke the target functio
 SELECT ext_memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', iterations => 50);
 ```
 
-| Parameter | Default | Description |
-|---|---|---|
-| `workers` | `4` | Number of concurrent backend workers |
-| `iterations` | `50` | Invocations per worker |
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>workers</code></td><td><code>4</code></td><td>Number of concurrent backend workers</td></tr>
+    <tr><td><code>iterations</code></td><td><code>50</code></td><td>Invocations per worker</td></tr>
+  </tbody>
+</table>
 
 **What it catches:** Shmem overruns under concurrent access; DSM lifecycle races; LWLock starvation.
 

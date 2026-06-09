@@ -38,10 +38,15 @@ Phase 2 adds probes that require process isolation. Several items are already co
 
 ## Known limitations
 
-| Limitation | Detail |
-|---|---|
-| Not production-safe | Instruments internals not designed for runtime inspection |
-| PG 15+ only | Relies on `MemoryContextData` layout introduced in PG 15 |
-| Context name collisions | Named context matching can fail if two contexts share a name |
-| Single-backend view | Phase 1 does not observe allocations in other backend processes |
-| `all`-mode skips non-planned statements | In `all` mode the before-snapshot is taken in `planner_hook`. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, `SET`, etc.) bypass both hooks, so neither is analyzed. Use `executor` mode if you need every executor invocation bracketed. |
+<table>
+  <thead>
+    <tr><th>Limitation</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Not production-safe</td><td>Instruments internals not designed for runtime inspection</td></tr>
+    <tr><td>PG 15+ only</td><td>Relies on <code>MemoryContextData</code> layout introduced in PG 15</td></tr>
+    <tr><td>Context name collisions</td><td>Named context matching can fail if two contexts share a name</td></tr>
+    <tr><td>Single-backend view</td><td>Phase 1 does not observe allocations in other backend processes</td></tr>
+    <tr><td><code>all</code>-mode skips non-planned statements</td><td>In <code>all</code> mode the before-snapshot is taken in <code>planner_hook</code>. Cached/prepared statements re-executed via the extended protocol skip planning, and utility statements (DDL, <code>SET</code>, etc.) bypass both hooks. Use <code>executor</code> mode if you need every executor invocation bracketed.</td></tr>
+  </tbody>
+</table>

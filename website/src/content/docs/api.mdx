@@ -32,22 +32,33 @@ SELECT * FROM ext_memcheck.violation_log;
 
 ### Violation log table schema
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | `int` | Auto-incrementing violation ID |
-| `ts` | `timestamptz` | Timestamp of the violation |
-| `backend_pid` | `int` | PID of the backend that detected the violation |
-| `check_type` | `text` | Type of the check that detected the violation: `context_leak`, `wrong_ctx_alloc`, `ctx_bloat`, `shmem_overrun`, `dsm_leak`. |
-| `severity` | `text` | Severity of the violation: `ERROR`, `WARNING`, or `INFO`. |
-| `detail` | `text` | Human-readable description of the violation |
-| `source_lib` | `text` | The library that triggered the violation (e.g., buggy_pg_ext) |
+<table>
+  <thead>
+    <tr><th>Column</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>id</code></td><td><code>int</code></td><td>Auto-incrementing violation ID</td></tr>
+    <tr><td><code>ts</code></td><td><code>timestamptz</code></td><td>Timestamp of the violation</td></tr>
+    <tr><td><code>backend_pid</code></td><td><code>int</code></td><td>PID of the backend that detected the violation</td></tr>
+    <tr><td><code>check_type</code></td><td><code>text</code></td><td>Type of the check: <code>context_leak</code>, <code>wrong_ctx_alloc</code>, <code>ctx_bloat</code>, <code>shmem_overrun</code>, <code>dsm_leak</code></td></tr>
+    <tr><td><code>severity</code></td><td><code>text</code></td><td>Severity: <code>ERROR</code>, <code>WARNING</code>, or <code>INFO</code></td></tr>
+    <tr><td><code>detail</code></td><td><code>text</code></td><td>Human-readable description of the violation</td></tr>
+    <tr><td><code>source_lib</code></td><td><code>text</code></td><td>The library that triggered the violation (e.g., <code>buggy_pg_ext</code>)</td></tr>
+  </tbody>
+</table>
 
 ### Severity levels
-| Level | Memory Leak Size |
-|---|---|
-| `ERROR` | > 1 MiB |
-| `WARNING` | > 64 KiB and ≤ 1 MiB |
-| `INFO` | ≥ min_leak_bytes and ≤ 64 KiB |
+
+<table>
+  <thead>
+    <tr><th>Level</th><th>Memory Leak Size</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ERROR</code></td><td>&gt; 1 MiB</td></tr>
+    <tr><td><code>WARNING</code></td><td>&gt; 64 KiB and ≤ 1 MiB</td></tr>
+    <tr><td><code>INFO</code></td><td>≥ <code>min_leak_bytes</code> and ≤ 64 KiB</td></tr>
+  </tbody>
+</table>
 
 ---
 
@@ -73,18 +84,28 @@ SELECT ext_memcheck.begin(
 
 **Parameters:**
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `ext_context_pattern` | `text` | `''` | SQL `LIKE` pattern (`%` wildcard) for context names to monitor. An empty string monitors all contexts. Example: `'MyExtCtx%'` monitors only contexts whose names start with `MyExtCtx`. |
-| `options` | `jsonb` | `NULL` | Optional JSON object with the following keys: |
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ext_context_pattern</code></td><td><code>text</code></td><td><code>''</code></td><td>SQL <code>LIKE</code> pattern (<code>%</code> wildcard) for context names to monitor. An empty string monitors all contexts. Example: <code>'MyExtCtx%'</code> monitors only contexts whose names start with <code>MyExtCtx</code>.</td></tr>
+    <tr><td><code>options</code></td><td><code>jsonb</code></td><td><code>NULL</code></td><td>Optional JSON object with the following keys:</td></tr>
+  </tbody>
+</table>
 
 **`options` keys:**
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `track_shmem` | `bool` | `true` | Whether shmem sentinel checks are active for this session. |
-| `track_dsm` | `bool` | `true` | Whether DSM leak checks are active for this session. |
-| `allowed_contexts` | `text[]` | `[]` | Allowlist of context names that are explicitly permitted to grow without triggering a `wrong_ctx_alloc` violation. For example, extensions that intentionally cache data in `TopMemoryContext` across queries should list it here to suppress false positives. |
+<table>
+  <thead>
+    <tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>track_shmem</code></td><td><code>bool</code></td><td><code>true</code></td><td>Whether shmem sentinel checks are active for this session.</td></tr>
+    <tr><td><code>track_dsm</code></td><td><code>bool</code></td><td><code>true</code></td><td>Whether DSM leak checks are active for this session.</td></tr>
+    <tr><td><code>allowed_contexts</code></td><td><code>text[]</code></td><td><code>[]</code></td><td>Allowlist of context names explicitly permitted to grow without triggering a <code>wrong_ctx_alloc</code> violation. Extensions that intentionally cache data in <code>TopMemoryContext</code> across queries should list it here to suppress false positives.</td></tr>
+  </tbody>
+</table>
 
 **Returns:** `text` — confirmation message.
 
@@ -140,11 +161,16 @@ SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations :=
 
 **Parameters:**
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `scenario_name` | `text` | — | Scenario name. Six scenarios are available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe` (in-process), plus `use_after_reset` and `oom_simulation` (BGWorker crash-isolated). See [Stress Scenarios](/scenarios/). |
-| `iterations` | `int` | `100` | Number of iterations to execute within the scenario. |
-| `workload` | `text` | `'SELECT 1'` | SQL query to execute within each iteration of the scenario. User can provide a **`custom query`** to simulate different workloads. |
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>scenario_name</code></td><td><code>text</code></td><td>—</td><td>Scenario name. Six scenarios are available: <code>growth_benchmark</code>, <code>tx_abort_loop</code>, <code>shmem_sentinel_probe</code>, <code>wrong_context_probe</code> (in-process), plus <code>use_after_reset</code> and <code>oom_simulation</code> (BGWorker crash-isolated). See <a href="/scenarios/">Stress Scenarios</a>.</td></tr>
+    <tr><td><code>iterations</code></td><td><code>int</code></td><td><code>100</code></td><td>Number of iterations to execute within the scenario.</td></tr>
+    <tr><td><code>workload</code></td><td><code>text</code></td><td><code>'SELECT 1'</code></td><td>SQL query to execute within each iteration. Supply a custom query to simulate your extension's workload.</td></tr>
+  </tbody>
+</table>
 
 **Returns:** `text` — confirmation message.
 
@@ -169,13 +195,18 @@ SELECT * FROM ext_memcheck.dsm_tracking();
 
 **Returns:** `TABLE(segid BIGINT, backend_pid INTEGER, attach_at TIMESTAMPTZ, size_bytes BIGINT, detached BOOLEAN)`
 
-| Column | Description |
-|---|---|
-| `segid` | DSM handle (OS-level segment identifier) |
-| `backend_pid` | PID of the backend that recorded the attachment |
-| `attach_at` | Timestamp when the segment was tracked |
-| `size_bytes` | Segment size in bytes |
-| `detached` | `true` if a matching detach was observed, `false` if leaked |
+<table>
+  <thead>
+    <tr><th>Column</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>segid</code></td><td>DSM handle (OS-level segment identifier)</td></tr>
+    <tr><td><code>backend_pid</code></td><td>PID of the backend that recorded the attachment</td></tr>
+    <tr><td><code>attach_at</code></td><td>Timestamp when the segment was tracked</td></tr>
+    <tr><td><code>size_bytes</code></td><td>Segment size in bytes</td></tr>
+    <tr><td><code>detached</code></td><td><code>true</code> if a matching detach was observed, <code>false</code> if leaked</td></tr>
+  </tbody>
+</table>
 
 ---
 
@@ -215,10 +246,15 @@ SELECT ext_memcheck.register_shmem_probe('my_ext SomeStruct', 1234);
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|---|---|---|
-| `seg_name` | `text` | Name the segment is registered under in `ShmemIndex` — must match the first argument to `ShmemInitStruct` exactly. |
-| `allocated_size` | `bigint` | Exact size in bytes used when the segment was allocated. The sentinel is planted at `base_ptr[allocated_size]`, which must fall within the alignment slack reserved by `CACHELINEALIGN(allocated_size)`. |
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>seg_name</code></td><td><code>text</code></td><td>Name the segment is registered under in <code>ShmemIndex</code> — must match the first argument to <code>ShmemInitStruct</code> exactly.</td></tr>
+    <tr><td><code>allocated_size</code></td><td><code>bigint</code></td><td>Exact size in bytes used when the segment was allocated. The sentinel is planted at <code>base_ptr[allocated_size]</code>, which must fall within the alignment slack reserved by <code>CACHELINEALIGN(allocated_size)</code>.</td></tr>
+  </tbody>
+</table>
 
 **Returns:** `text` — confirmation message.
 
@@ -342,11 +378,16 @@ SET pg_ext_memcheck.memcheck_mode = 'executor';
 SET pg_ext_memcheck.memcheck_mode = 'all';
 ```
 
-| Value | Hooks active | When to use |
-|---|---|---|
-| `none` | None | Disable the extension without unloading it; zero runtime overhead. |
-| `executor` | `ExecutorStart`, `ExecutorEnd` | Focused testing of Executor phase allocations. |
-| `all` | Planner `planner_hook` + Executor `ExecutorEnd` | Full sweep — catches leaks that happen during planning and execution. |
+<table>
+  <thead>
+    <tr><th>Value</th><th>Hooks active</th><th>When to use</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>none</code></td><td>None</td><td>Disable the extension without unloading it; zero runtime overhead.</td></tr>
+    <tr><td><code>executor</code></td><td><code>ExecutorStart</code>, <code>ExecutorEnd</code></td><td>Focused testing of executor-phase allocations.</td></tr>
+    <tr><td><code>all</code></td><td>Planner <code>planner_hook</code> + Executor <code>ExecutorEnd</code></td><td>Full sweep — catches leaks that happen during planning and execution.</td></tr>
+  </tbody>
+</table>
 
 **Recommended workflow:**
 
@@ -358,11 +399,16 @@ SET pg_ext_memcheck.memcheck_mode = 'all';
 
 ## Violation types reference
 
-| Type | Phase | Status | Description |
-|---|---|---|---|
-| `context_leak` | 1 | Available | A `MemoryContext` created during query execution was not freed by `ExecutorEnd`. |
-| `wrong_ctx_alloc` | 1 | Available | A `palloc()` landed in a long-lived context (`TopMemoryContext`, `CacheMemoryContext`, or a user-configured forbidden context). |
-| `shmem_overrun` | 1 | Available | Sentinel bytes after a `ShmemAlloc()` allocation were overwritten. |
-| `dsm_leak` | 1 | Available | A DSM segment was attached during a test window but not detached before the window closed. |
-| `ctx_bloat` | 1 | Available | A `MemoryContext` grew monotonically across two or more log-spaced checkpoints in a `growth_benchmark` run. Severity reflects total growth; superlinear acceleration bumps severity one level. |
-| `use_after_reset` | 2 | Available | BGWorker crash confirmed via non-zero exit code after `elog(FATAL)` in an isolated worker process. |
+<table>
+  <thead>
+    <tr><th>Type</th><th>Phase</th><th>Status</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>context_leak</code></td><td>1</td><td>Available</td><td>A <code>MemoryContext</code> created during query execution was not freed by <code>ExecutorEnd</code>.</td></tr>
+    <tr><td><code>wrong_ctx_alloc</code></td><td>1</td><td>Available</td><td>A <code>palloc()</code> landed in a long-lived context (<code>TopMemoryContext</code>, <code>CacheMemoryContext</code>, or a user-configured forbidden context).</td></tr>
+    <tr><td><code>shmem_overrun</code></td><td>1</td><td>Available</td><td>Sentinel bytes after a <code>ShmemAlloc()</code> allocation were overwritten.</td></tr>
+    <tr><td><code>dsm_leak</code></td><td>1</td><td>Available</td><td>A DSM segment was attached during a test window but not detached before the window closed.</td></tr>
+    <tr><td><code>ctx_bloat</code></td><td>1</td><td>Available</td><td>A <code>MemoryContext</code> grew monotonically across two or more log-spaced checkpoints in a <code>growth_benchmark</code> run. Severity reflects total growth; superlinear acceleration bumps severity one level.</td></tr>
+    <tr><td><code>use_after_reset</code></td><td>2</td><td>Available</td><td>BGWorker crash confirmed via non-zero exit code after <code>elog(FATAL)</code> in an isolated worker process.</td></tr>
+  </tbody>
+</table>
