@@ -23,10 +23,18 @@ Phase 1 focuses on the bugs that hurt extension authors most often and that no e
 
 ## Phase 2 scope
 
-Phase 2 adds probes that require process isolation:
+Phase 2 adds probes that require process isolation. Several items are already complete; the rest are planned.
 
-- **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via exit code, not by propagating SIGSEGV to the test session
-- **Stress scenario catalog** — expanded parameterized scenarios (reset storm, concurrent backends, and more)
+**Completed:**
+
+- **`wrong_context_probe` scenario** ✓ — focused wrong-context allocation check; runs only `check_wrong_context_alloc` detection without the `context_leak` diff, giving a clean isolated signal across N controlled repetitions
+- **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via BGWorker exit code, not by propagating SIGSEGV to the test session
+
+**Planned:**
+
+- **`context_reset_storm` scenario** — rapidly resets the current `MemoryContext` between invocations to reveal extensions that hold raw pointers across context boundaries
+- **`concurrent_backends` scenario** — spawns multiple background workers that simultaneously invoke the target function to stress shared data structures and LWLock usage
+- **`dsm_lifecycle_check` scenario** — runs the target function inside a DSM segment allocation/deallocation cycle and verifies correct attach/detach behavior
 
 ## Known limitations
 

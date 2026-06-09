@@ -272,11 +272,36 @@ SELECT ext_memcheck.clear_shmem_registry();
 
 Set these in `postgresql.conf` or with `SET` at session scope (`PGC_USERSET` — no restart required).
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `pg_ext_memcheck.memcheck_mode` | `enum` | `none` | Controls which parts of query execution are instrumented. Set to `none` until `begin()` activates a window. See below. |
-| `pg_ext_memcheck.min_leak_bytes` | `int` | `8192` | Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored. |
-| `pg_ext_memcheck.bloat_min_bytes` | `int` | `8192` | Minimum cumulative growth in bytes for a context to be reported as bloating by `growth_benchmark`. Contexts that grow by less than this amount across checkpoints are silently ignored. |
+<table>
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      <th>Type</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>pg_ext_memcheck.memcheck_mode</code></td>
+      <td><code>enum</code></td>
+      <td><code>none</code></td>
+      <td>Controls which parts of query execution are instrumented. Set to <code>none</code> until <code>begin()</code> activates a window. See below.</td>
+    </tr>
+    <tr>
+      <td><code>pg_ext_memcheck.min_leak_bytes</code></td>
+      <td><code>int</code></td>
+      <td><code>8192</code></td>
+      <td>Minimum context growth in bytes required to log a violation. Smaller growth is silently ignored.</td>
+    </tr>
+    <tr>
+      <td><code>pg_ext_memcheck.bloat_min_bytes</code></td>
+      <td><code>int</code></td>
+      <td><code>8192</code></td>
+      <td>Minimum cumulative growth in bytes for a context to be reported as bloating by <code>growth_benchmark</code>. Contexts that grow by less than this amount across checkpoints are silently ignored.</td>
+    </tr>
+  </tbody>
+</table>
 
 <Aside type="note" title="Monitoring mode vs. targeting">
 `memcheck_mode` controls **which execution phases** are hooked (planner + executor vs. executor-only vs. off). The `ext_context_pattern` and `allowed_contexts` arguments to `begin()` control **which contexts** are reported within those phases. The two are independent — set the GUC once for the session and vary the `begin()` arguments per test.
