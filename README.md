@@ -124,14 +124,14 @@ Growth is classified as **superlinear** when the per-iteration rate in the final
 
 ## Stress scenarios
 
-Six scenarios are available. `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` run in-process. `use_after_reset` and `oom_simulation` run in a crash-isolated BGWorker so SIGSEGV/OOM cannot kill the calling session. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are still planned.
+Ten scenarios are available. In-process: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`, `context_reset_storm`, `cursor_leak`, `cold_warm_cold`. BGWorker (crash-isolated): `use_after_reset`, `oom_simulation`, `concurrent_backends`. The `dsm_lifecycle_check` scenario is planned for a future release.
 
 ```sql
 -- Measures per-context bloat at log-spaced checkpoints; emits ctx_bloat violations
-SELECT ext_memcheck.run_scenario(scenario_name := 'growth_benchmark', iterations := 100, workload := 'SELECT your_extension.some_function(''input'');');
+SELECT ext_memcheck.run_scenario('growth_benchmark', 100, 'SELECT your_extension.some_function(''input'');');
 
 -- Tests memory cleanup on transaction abort
-SELECT ext_memcheck.run_scenario(scenario_name := 'tx_abort_loop', iterations := 50, workload := 'SELECT 1');
+SELECT ext_memcheck.run_scenario('tx_abort_loop', 50, 'SELECT 1');
 
 -- Plants sentinel bytes past shmem boundaries and verifies integrity after the workload
 SELECT ext_memcheck.run_scenario('shmem_sentinel_probe', 10, 'SELECT 1');
@@ -144,6 +144,18 @@ SELECT ext_memcheck.run_scenario('use_after_reset', 1, 'SELECT 1');
 
 -- Allocate until OOM in a BGWorker; detects crash via non-zero exit code
 SELECT ext_memcheck.run_scenario('oom_simulation', 1, 'SELECT 1');
+
+-- Allocate/reset a scratch context then run workload; catches stale pointer misuse
+SELECT ext_memcheck.run_scenario('context_reset_storm', 50, 'SELECT your_extension.some_function(''input'')');
+
+-- Open 32 SPI cursors without closing them; detects portal-context accumulation
+SELECT ext_memcheck.run_scenario('cursor_leak', 10, 'SELECT your_extension.some_function(''input'')');
+
+-- Cold phase → 1-second idle → warm phase; detects CacheMemoryContext growth
+SELECT ext_memcheck.run_scenario('cold_warm_cold', 6, 'SELECT your_extension.some_function(''input'')');
+
+-- Launch N sequential BGWorker backends each running the workload
+SELECT ext_memcheck.run_scenario('concurrent_backends', 5, 'SELECT your_extension.some_function(''input'')');
 
 SELECT ext_memcheck.flush_violations();
 ```
@@ -296,7 +308,7 @@ PG_CONFIG=pg_config ./test/run_tests.sh
 
 **Phase 1 (complete):** Context leak detection, wrong-context allocation detection, monotonic context-bloat detection with linear / superlinear shape classification, shmem sentinel probing, DSM lifecycle tracking, SQL-queryable violation log, session-level control API (`begin` / `end` / `run_scenario`).
 
-**Phase 2 (in progress):** `wrong_context_probe` scenario ✓, BGWorker crash harness ✓ (`use_after_reset`, `oom_simulation`). Remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) still planned.
+**Phase 2 (complete):** `wrong_context_probe` ✓, BGWorker crash harness ✓ (`use_after_reset`, `oom_simulation`), `context_reset_storm` ✓, `cursor_leak` ✓, `cold_warm_cold` ✓, `concurrent_backends` ✓. The `dsm_lifecycle_check` scenario is planned for a future release.
 
 See the [full roadmap](https://pg-ext-memcheck.vercel.app/roadmap/) for live development status.
 
