@@ -29,11 +29,13 @@ Phase 2 adds probes that require process isolation. Several items are already co
 
 - **`wrong_context_probe` scenario** ✓ — focused wrong-context allocation check; runs only `check_wrong_context_alloc` detection without the `context_leak` diff, giving a clean isolated signal across N controlled repetitions
 - **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via BGWorker exit code, not by propagating SIGSEGV to the test session
+- **`context_reset_storm` scenario** ✓ — allocates 100 × 64 B into a scratch context, calls `MemoryContextReset()`, then runs the workload; catches extensions that hold stale pointers across context resets (Bug 3)
+- **`cursor_leak` scenario** ✓ — opens up to 32 SPI cursors without closing them while running the workload; portal-context accumulation surfaces as `context_leak` violations (Bug 1)
+- **`cold_warm_cold` scenario** ✓ — cold phase → 1-second `pg_sleep` → warm phase; detects `CacheMemoryContext` growth that persists across idle boundaries (Bug 6)
+- **`concurrent_backends` scenario** ✓ — launches up to 16 sequential BGWorker backends each running the workload in a fresh process; validates shmem re-attach paths and crash resilience across reconnects (Bug 4)
 
 **Planned:**
 
-- **`context_reset_storm` scenario** — rapidly resets the current `MemoryContext` between invocations to reveal extensions that hold raw pointers across context boundaries
-- **`concurrent_backends` scenario** — spawns multiple background workers that simultaneously invoke the target function to stress shared data structures and LWLock usage
 - **`dsm_lifecycle_check` scenario** — runs the target function inside a DSM segment allocation/deallocation cycle and verifies correct attach/detach behavior
 
 ## Known limitations

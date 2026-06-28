@@ -85,10 +85,16 @@ $$;
 CREATE VIEW ext_memcheck.scenarios AS
 SELECT * FROM (
     VALUES
-    ('growth_benchmark', 'Measures context size growth over N invocations'),
-    ('tx_abort_loop', 'Runs N savepoint/rollback cycles to test abort-path cleanup'),
-    ('shmem_sentinel_probe', 'Plants sentinel bytes around shmem allocations and verifies integrity after workload'),
-    ('wrong_context_probe', 'Checks for allocations that land in long-lived contexts and reports violations')
+    ('growth_benchmark',      'Measures context size growth over N invocations (ctx_bloat)'),
+    ('tx_abort_loop',         'Runs N savepoint/rollback cycles to test abort-path cleanup (context_leak)'),
+    ('shmem_sentinel_probe',  'Plants sentinel bytes around shmem allocations and verifies integrity after workload (shmem_overrun)'),
+    ('wrong_context_probe',   'Checks for allocations that land in long-lived contexts and reports violations (wrong_ctx_alloc)'),
+    ('use_after_reset',       'BGWorker: forces a context reset then re-invokes extension; crash = confirmed use-after-reset bug'),
+    ('oom_simulation',        'BGWorker: exhausts palloc arena; confirms extension handles OOM without crashing the session'),
+    ('context_reset_storm',   'Resets a scratch context 100x per iteration then runs workload; reveals stale-pointer misuse (context_leak)'),
+    ('cursor_leak',           'Opens N SPI cursors without closing them; reveals portal-context accumulation (context_leak)'),
+    ('cold_warm_cold',        'Cold run → 1 s idle → warm run; reveals CacheMemoryContext growth across idle boundaries (context_leak)'),
+    ('concurrent_backends',   'Launches N sequential BGWorker backends each running the workload; validates shmem access across reconnects (shmem_overrun)')
 ) AS scenarios(name, description);
 
 

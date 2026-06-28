@@ -6,7 +6,7 @@ description: The built-in stress scenario catalog for pg_ext_memcheck.
 import { Aside } from '@astrojs/starlight/components';
 
 <Aside type="note" title="Availability">
-  Six scenarios are available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`, `use_after_reset`, and `oom_simulation`. The last two run in a crash-isolated BGWorker process. The remaining scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are deferred to a later release and are not yet implemented.
+  Ten scenarios are available. `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`, `context_reset_storm`, `cursor_leak`, `cold_warm_cold` run in-process. `use_after_reset`, `oom_simulation`, and `concurrent_backends` run in crash-isolated BGWorker processes. The `dsm_lifecycle_check` scenario is deferred to a later release.
 </Aside>
 
 Stress scenarios are parameterized test programs that subject an extension function to adversarial conditions that rarely appear in normal unit tests. Run them with `ext_memcheck.run_scenario()`. Refer to the [API documentation](/api/#ext_memcheckrun_scenario) for usage details.
@@ -159,58 +159,116 @@ SELECT ext_memcheck.flush_violations();
 
 ---
 
-## dsm_lifecycle_check *(Phase 2)*
+## context_reset_storm
+
+Allocates 100 × 64-byte blocks into a private scratch `MemoryContext`, calls `MemoryContextReset()` to invalidate every pointer into it, then runs the workload via SPI — repeated `iterations` times. Reveals extensions that cache raw pointers into contexts they do not own.
+
+```sql
+SELECT ext_memcheck.run_scenario('context_reset_storm', 50, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type IN ('context_leak', 'wrong_ctx_alloc');
+```
+
+**How it works:**
+
+1. A scratch `AllocSet` context named `pg_ext_memcheck storm` is created under `TopMemoryContext`.
+2. For each iteration:
+   - 100 × 64-byte blocks are allocated into the scratch context, simulating extension state.
+   - `MemoryContextReset()` is called — all pointers into the context are now stale.
+   - The workload SQL executes via SPI. If the extension dereferences a pointer into the now-reset context, behaviour is undefined.
+3. After all iterations, the before/after context diff catches any retained allocations.
+4. The scratch context is deleted on clean exit.
+
+**What it catches:** Extensions that hold raw pointers into short-lived contexts across call boundaries; state cached in query-local storage that is accessed in a later query after its owning context has been reset.
+
+**Note:** For extensions that are *known* to crash on use-after-reset, redirect testing to the `use_after_reset` scenario, which runs in a crash-isolated BGWorker so a SIGSEGV does not terminate the test session.
+
+---
+
+## cursor_leak
+
+Opens up to 32 SPI cursors (portals) without closing them, runs the workload `iterations` times while all remain open, then lets `SPI_finish()` drain and close them. Reveals portal-context accumulation during the open window.
+
+```sql
+SELECT ext_memcheck.run_scenario('cursor_leak', 10, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'context_leak';
+```
+
+**How it works:**
+
+1. `min(iterations, 32)` cursors are opened via `SPI_cursor_open_with_args()` and left open.
+2. The workload SQL executes `iterations` times while all cursors remain open, simulating concurrent portal usage alongside the extension under test.
+3. The before/after context diff (taken in `run_scenario`) captures any `PortalContext` child growth during this window as `context_leak` violations.
+4. `SPI_finish()` closes all open cursors, leaving the backend clean.
+
+**What it catches:** Extensions that open internal cursors or portals without closing them; portal context accumulation from SPI queries that are never finished; DSM segment leaks tied to cursor lifetime.
+
+---
+
+## cold_warm_cold
+
+Runs the workload for a cold batch, sleeps for 1 second to simulate an idle period, then runs a warm batch. The before/after context diff across the whole scenario reveals `CacheMemoryContext` or extension-cache growth that persists across idle boundaries.
+
+```sql
+SELECT ext_memcheck.run_scenario('cold_warm_cold', 6, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type IN ('context_leak', 'wrong_ctx_alloc');
+```
+
+**How it works:**
+
+1. `floor(iterations / 3)` workload executions run as the **cold phase** — extension is warming up its caches.
+2. `SELECT pg_sleep(1)` via SPI simulates the backend sitting idle (e.g., between connection pool checkout events).
+3. Another `floor(iterations / 3)` executions run as the **warm phase** — extension uses its now-warmed state.
+4. The before/after context diff across the entire scenario shows whether any context grew from the start of cold to the end of warm — indicative of a cache that accumulates without eviction.
+
+<table>
+  <thead>
+    <tr><th>Phase</th><th>Iterations</th><th>Purpose</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Cold</td><td><code>floor(iterations / 3)</code></td><td>Prime extension caches</td></tr>
+    <tr><td>Idle</td><td>1 s sleep</td><td>Simulate inactivity between uses</td></tr>
+    <tr><td>Warm</td><td><code>floor(iterations / 3)</code></td><td>Exercise with warm state</td></tr>
+  </tbody>
+</table>
+
+**What it catches:** `CacheMemoryContext` growth that accumulates across idle periods; extension-level caches that grow monotonically without any eviction policy; allocations into long-lived contexts that only appear after the extension has been used at least once.
+
+**Note:** The 1-second sleep is intentional. Set `iterations` to at least 6 (giving ≥ 2 iterations per phase) for meaningful results.
+
+---
+
+## concurrent_backends
+
+Launches up to 16 sequential BGWorker backends — each running the workload in a fresh backend process — and detects any crash or error across those launches. Each worker connects to the same database, executes the workload, and exits cleanly or with a non-zero code that is recorded as a `concurrent_backends` ERROR violation.
+
+```sql
+SELECT ext_memcheck.run_scenario('concurrent_backends', 5, 'SELECT your_ext.fn()');
+SELECT ext_memcheck.flush_violations();
+SELECT * FROM ext_memcheck.violation_log WHERE check_type = 'concurrent_backends';
+```
+
+**How it works:**
+
+1. `min(iterations, 16)` workers are launched, one at a time, via `launch_workload_worker()`.
+2. Each worker connects to the current database, executes the workload SQL via SPI in a transaction, and exits.
+3. The calling backend blocks on `WaitForBackgroundWorkerShutdown()` between launches (sequential, not truly concurrent — see note below).
+4. Any worker that exits with a non-zero code (ERROR, FATAL, SIGSEGV) logs a `concurrent_backends` ERROR violation to the shared ring buffer.
+
+**What it catches:** Crashes that only appear in a fresh backend process (e.g., missing shmem re-attach on reconnect); extension code that assumes single-backend execution; shmem access patterns that corrupt data when exercised across multiple reconnects.
+
+<Aside type="note" title="Sequential, not truly concurrent">
+  Workers run one at a time because the `WorkerSlot` is a single shared slot. This exercises multi-backend code paths (fresh connection, shmem re-attach, `_PG_init` re-run) without the race conditions of true concurrency. True parallel access requires splitting the workload across multiple sessions at the SQL level (e.g., using `pg_background` or a connection-pooling test harness).
+</Aside>
+
+---
+
+## dsm_lifecycle_check *(planned)*
 
 Runs the target function inside a DSM segment allocation/deallocation cycle and verifies that the extension correctly attaches and detaches.
 
-```sql
-SELECT ext_memcheck.run_scenario('dsm_lifecycle_check', target => 'my_ext.fn', iterations => 20);
-```
-
-**What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls.
-
----
-
-## context_reset_storm *(Phase 2)*
-
-Rapidly and repeatedly resets the current `MemoryContext` between invocations of the target function. Reveals extensions that hold raw pointers across context boundaries.
-
-```sql
-SELECT ext_memcheck.run_scenario('context_reset_storm', target => 'my_ext.fn', iterations => 200);
-```
-
-<table>
-  <thead>
-    <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
-  </thead>
-  <tbody>
-    <tr><td><code>iterations</code></td><td><code>50</code></td><td>Number of invocations</td></tr>
-    <tr><td><code>reset_frequency</code></td><td><code>1</code></td><td>Reset context every N invocations</td></tr>
-  </tbody>
-</table>
-
-**What it catches:** Use-after-reset dereferences; context-local data that survives a reset by accident.
-
----
-
-## concurrent_backends *(Phase 2)*
-
-Spawns multiple background workers that simultaneously invoke the target function. Stresses shared data structures and LWLock usage.
-
-```sql
-SELECT ext_memcheck.run_scenario('concurrent_backends', target => 'my_ext.fn', iterations => 50);
-```
-
-<table>
-  <thead>
-    <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
-  </thead>
-  <tbody>
-    <tr><td><code>workers</code></td><td><code>4</code></td><td>Number of concurrent backend workers</td></tr>
-    <tr><td><code>iterations</code></td><td><code>50</code></td><td>Invocations per worker</td></tr>
-  </tbody>
-</table>
-
-**What it catches:** Shmem overruns under concurrent access; DSM lifecycle races; LWLock starvation.
+**What it catches:** Leaked DSM segment handles; missing `dsm_detach()` calls on backend exit.
 
 ---
