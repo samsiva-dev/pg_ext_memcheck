@@ -23,13 +23,17 @@ typedef enum WorkerStatus {
     WORKER_STATUS_CRASHED = 3
 } WorkerStatus;
 
+#define WORKER_WORKLOAD_LEN  256
+
 typedef struct WorkerSlot {
     LWLock       lock;
     WorkerStatus status;
     char         scenario[WORKER_SCENARIO_LEN];   /* e.g. "use_after_reset" */
     char         database[WORKER_DATABASE_LEN];   /* DB for the worker to connect to */
+    char         workload[WORKER_WORKLOAD_LEN];   /* SQL for run_workload scenario */
     int          requestor_pid;                   /* PID of the launching backend */
     int          exit_code;                       /* non-zero → crash */
+    int          n_workers;                       /* number of concurrent workers (concurrent_backends) */
 } WorkerSlot;
 
 extern WorkerSlot *worker_slot;
@@ -40,6 +44,7 @@ extern void worker_harness_init(void);
 
 /* Called from sql_api.c scenario dispatch */
 extern void launch_crash_isolation_worker(const char *scenario);
+extern void launch_workload_worker(const char *workload);
 
 /* BGWorker entry point — must be extern and visible for RegisterDynamicBackgroundWorker */
 extern void bgworker_harness_main(Datum main_arg);

@@ -39,7 +39,11 @@ REGRESS = \
 	15_buggy_ext_wrong_ctx_detection \
 	16_buggy_ext_dsm_leak_detection \
 	17_nested_query_analysis \
-	18_worker_harness 
+	18_worker_harness \
+	19_context_reset_storm \
+	20_cursor_leak \
+	21_cold_warm_cold \
+	22_concurrent_backends
 
 REGRESS_OPTS = --inputdir=test --outputdir=test
 

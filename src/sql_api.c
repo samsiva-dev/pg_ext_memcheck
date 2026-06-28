@@ -46,6 +46,7 @@
 #include "include/memcheck_hooks.h"
 #include "include/dsm_tracker.h"
 #include "include/shmem_probe.h"
+#include "include/worker_harness.h"
 
 #define MAX_CHECKPOINTS 8
 
@@ -76,6 +77,10 @@ static void run_shmem_sentinel_probe(int iterations, const char *workload);
 static void run_wrong_context_probe(int iterations, const char *workload);
 static void run_use_after_reset(int iterations, const char *workload);
 static void run_oom_simulation(int iterations, const char *workload);
+static void run_context_reset_storm(int iterations, const char *workload);
+static void run_cursor_leak(int iterations, const char *workload);
+static void run_cold_warm_cold(int iterations, const char *workload);
+static void run_concurrent_backends(int iterations, const char *workload);
 static Size ctx_used_bytes(const CtxSnapshot *s);
 static int build_checkpoints(int iterations, int *ckpts);
 static void record_checkpoint(BloatSeries **series, int *count, int *cap,
@@ -521,6 +526,8 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
      *   wrong_context_probe     -> wrong_ctx_alloc only
      *   use_after_reset         -> none (BGWorker handles internally)
      *   oom_simulation          -> none (BGWorker handles internally)
+     *   concurrent_backends     -> none (BGWorker handles internally per-worker)
+     *   cursor_leak             -> context_leak only (no wrong-ctx expected)
      *   everything else         -> context_leak + wrong_ctx_alloc
      */
     if (strcmp(scenario_str, "growth_benchmark") == 0) {
@@ -530,8 +537,12 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
         run_leak_diff = false;
         run_wrong_ctx = true;
     } else if (strcmp(scenario_str, "use_after_reset") == 0 ||
-               strcmp(scenario_str, "oom_simulation") == 0) {
+               strcmp(scenario_str, "oom_simulation") == 0 ||
+               strcmp(scenario_str, "concurrent_backends") == 0) {
         run_leak_diff = false;
+        run_wrong_ctx = false;
+    } else if (strcmp(scenario_str, "cursor_leak") == 0) {
+        run_leak_diff = true;
         run_wrong_ctx = false;
     } else {
         run_leak_diff = true;
@@ -567,6 +578,14 @@ memcheck_run_scenario(PG_FUNCTION_ARGS)
             run_use_after_reset(iterations, workload_str);
         } else if (strcmp(scenario_str, "oom_simulation") == 0) {
             run_oom_simulation(iterations, workload_str);
+        } else if (strcmp(scenario_str, "context_reset_storm") == 0) {
+            run_context_reset_storm(iterations, workload_str);
+        } else if (strcmp(scenario_str, "cursor_leak") == 0) {
+            run_cursor_leak(iterations, workload_str);
+        } else if (strcmp(scenario_str, "cold_warm_cold") == 0) {
+            run_cold_warm_cold(iterations, workload_str);
+        } else if (strcmp(scenario_str, "concurrent_backends") == 0) {
+            run_concurrent_backends(iterations, workload_str);
         } else {
             memcheck_in_internal_query = false;
             active_hook_libs[0] = '\0';
@@ -1013,6 +1032,227 @@ clear_dsm_tracking(PG_FUNCTION_ARGS)
     LWLockRelease(&dsm_tracker_state->lock);    
     elog(INFO, "Cleared DSM tracking records in pg_ext_memcheck");
     PG_RETURN_VOID();
+}
+
+/*
+ * run_context_reset_storm -- repeatedly reset a scratch context then run the workload.
+ *
+ * For each iteration:
+ *   1. Allocate 100×64-byte blocks into a scratch context (simulating extension state).
+ *   2. Call MemoryContextReset(), invalidating all pointers into that context.
+ *   3. Run the workload via SPI.
+ *
+ * If the extension under test cached a pointer into the scratch context it may
+ * dereference stale memory.  The context-diff snapshot (taken in run_scenario)
+ * catches any retained allocation after the storm.  For true crash detection,
+ * redirect crash-inducing extensions through use_after_reset (BGWorker).
+ *
+ * Target bug class: Bug 3 — Use-After-Reset.
+ */
+static void
+run_context_reset_storm(int iterations, const char *workload)
+{
+    MemoryContext storm_ctx;
+    int           i, j;
+
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
+
+    storm_ctx = AllocSetContextCreate(TopMemoryContext,
+                                      "pg_ext_memcheck storm",
+                                      ALLOCSET_DEFAULT_SIZES);
+
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        MemoryContextDelete(storm_ctx);
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+    }
+
+    for (i = 0; i < iterations; i++)
+    {
+        MemoryContext old;
+        int           ret;
+
+        /* Simulate extension allocating state into the context */
+        old = MemoryContextSwitchTo(storm_ctx);
+        for (j = 0; j < 100; j++)
+            palloc(64);
+        MemoryContextSwitchTo(old);
+
+        /* Invalidate all pointers — extension should not hold references here */
+        MemoryContextReset(storm_ctx);
+
+        /* Run the workload; extension may access state it allocated above */
+        ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT)
+        {
+            SPI_finish();
+            MemoryContextDelete(storm_ctx);
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+        }
+    }
+
+    SPI_finish();
+    MemoryContextDelete(storm_ctx);
+}
+
+/*
+ * run_cursor_leak -- open N SPI cursors (portals) without closing them, run workload.
+ *
+ * Extensions that open cursors internally and fail to close them cause portal
+ * contexts to accumulate.  This scenario simulates that pattern: N cursors are
+ * opened and left open while the workload executes.  The snapshot diff (taken in
+ * run_scenario) reports PortalContext child growth as context_leak violations.
+ * Cursors are drained and closed via SPI_finish() at the end so the backend
+ * is left in a clean state.
+ *
+ * iterations controls both the number of open cursors (capped at 32) and the
+ * number of workload executions while they are open.
+ *
+ * Target bug class: Bug 1 — MemoryContext Leak / Bug 5 — DSM Segment Leak.
+ */
+static void
+run_cursor_leak(int iterations, const char *workload)
+{
+    int    n_portals;
+    int    i;
+
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
+
+    n_portals = (iterations < 32) ? iterations : 32;
+
+    if (SPI_connect() != SPI_OK_CONNECT)
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+
+    /* Open n_portals cursors without closing them */
+    for (i = 0; i < n_portals; i++)
+    {
+        char   cursor_name[64];
+        Portal p;
+
+        snprintf(cursor_name, sizeof(cursor_name), "pg_ext_memcheck_leak_%d", i);
+        p = SPI_cursor_open_with_args(cursor_name, workload,
+                                      0, NULL, NULL, NULL, true, 0);
+        if (p == NULL)
+        {
+            elog(WARNING, "pg_ext_memcheck: cursor %d failed to open, stopping at %d cursors",
+                 i, i);
+            break;
+        }
+    }
+
+    elog(INFO, "pg_ext_memcheck cursor_leak: %d cursors open", n_portals);
+
+    /* Run workload while cursors remain open, simulating concurrent portal usage */
+    for (i = 0; i < iterations; i++)
+    {
+        int ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT)
+        {
+            SPI_finish();
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed with code %d", ret);
+        }
+    }
+
+    /* SPI_finish closes all open portals/cursors owned by this connection */
+    SPI_finish();
+}
+
+/*
+ * run_cold_warm_cold -- run workload, sleep, run again; detect CacheMemoryContext misuse.
+ *
+ * Phase layout (each phase = iterations/3, minimum 1):
+ *   Cold  : first batch — extension caches into CacheMemoryContext
+ *   Sleep : 1-second pg_sleep — simulates idle time between sessions
+ *   Warm  : second batch — exercise extension with warm cache
+ *
+ * The snapshot diff across the entire scenario reveals whether CacheMemoryContext
+ * (or a child of it) grows monotonically across the cold→warm boundary, which
+ * would indicate the extension is accumulating cache entries without eviction.
+ *
+ * Target bug class: Bug 6 — Monotonic Context Growth.
+ */
+static void
+run_cold_warm_cold(int iterations, const char *workload)
+{
+    int phase_iters;
+    int i;
+
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
+
+    phase_iters = iterations / 3;
+    if (phase_iters < 1)
+        phase_iters = 1;
+
+    if (SPI_connect() != SPI_OK_CONNECT)
+        elog(ERROR, "pg_ext_memcheck: SPI_connect failed");
+
+    /* Cold phase */
+    elog(INFO, "pg_ext_memcheck cold_warm_cold: cold phase (%d iters)", phase_iters);
+    for (i = 0; i < phase_iters; i++)
+    {
+        int ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT)
+        {
+            SPI_finish();
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed (cold) with code %d", ret);
+        }
+    }
+
+    /* Idle phase — let backend sit idle to age cached contexts */
+    elog(INFO, "pg_ext_memcheck cold_warm_cold: idle phase (1 s)");
+    SPI_execute("SELECT pg_sleep(1)", false, 0);
+
+    /* Warm phase */
+    elog(INFO, "pg_ext_memcheck cold_warm_cold: warm phase (%d iters)", phase_iters);
+    for (i = 0; i < phase_iters; i++)
+    {
+        int ret = SPI_execute(workload, true, 0);
+        if (ret != SPI_OK_SELECT)
+        {
+            SPI_finish();
+            elog(ERROR, "pg_ext_memcheck: SPI_execute failed (warm) with code %d", ret);
+        }
+    }
+
+    SPI_finish();
+}
+
+/*
+ * run_concurrent_backends -- launch N BGWorkers sequentially, each running the workload.
+ *
+ * True concurrent access would require synchronisation infrastructure beyond the
+ * single WorkerSlot.  This implementation exercises the same code paths across N
+ * separate backend processes (sequentially), which:
+ *   - validates that each backend can attach to and read/write extension shmem
+ *     without corrupting the sentinel byte
+ *   - catches crashes (SIGSEGV, ERROR) that only manifest in a fresh backend
+ *     (e.g., missing shmem re-attach on reconnect)
+ *
+ * violations written:
+ *   concurrent_backends / ERROR  — if any worker exits non-zero
+ *
+ * Target bug class: Bug 4 — Shmem Segment Overrun.
+ */
+static void
+run_concurrent_backends(int iterations, const char *workload)
+{
+    int i;
+    int n_workers;
+
+    if (iterations <= 0)
+        elog(ERROR, "Iterations must be a positive integer");
+
+    n_workers = (iterations < 16) ? iterations : 16;
+
+    elog(INFO, "pg_ext_memcheck concurrent_backends: launching %d workers", n_workers);
+
+    for (i = 0; i < n_workers; i++)
+    {
+        elog(INFO, "pg_ext_memcheck concurrent_backends: worker %d/%d", i + 1, n_workers);
+        launch_workload_worker(workload);
+    }
 }
 
 /*
