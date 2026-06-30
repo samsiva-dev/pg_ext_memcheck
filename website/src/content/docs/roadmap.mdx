@@ -31,11 +31,13 @@ Phase 2 adds probes that require process isolation. Several items are already co
 - **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via BGWorker exit code, not by propagating SIGSEGV to the test session
 - **`tx_abort_loop` scenario** ✓ — wraps each workload invocation in a savepoint and rolls back, then compares memory context snapshots across the full loop to expose resources that only accumulate on abort and are never cleaned up on rollback
 - **`shmem_sentinel_probe` scenario** ✓ — plants `0xDE` sentinel bytes just past each registered shared memory segment boundary, runs the workload, then verifies all sentinels are intact; a corrupted sentinel means the extension wrote past its declared shmem boundary
+- **`context_reset_storm` scenario** ✓ — allocates 100 × 64 B into a scratch context, calls `MemoryContextReset()`, then runs the workload; catches extensions that hold stale pointers across context resets (Bug 3)
+- **`cursor_leak` scenario** ✓ — opens up to 32 SPI cursors without closing them while running the workload; portal-context accumulation surfaces as `context_leak` violations (Bug 1)
+- **`cold_warm_cold` scenario** ✓ — cold phase → 1-second `pg_sleep` → warm phase; detects `CacheMemoryContext` growth that persists across idle boundaries (Bug 6)
+- **`concurrent_backends` scenario** ✓ — launches up to 16 sequential BGWorker backends each running the workload in a fresh process; validates shmem re-attach paths and crash resilience across reconnects (Bug 4)
 
 **Planned:**
 
-- **`context_reset_storm` scenario** — rapidly resets the current `MemoryContext` between invocations to reveal extensions that hold raw pointers across context boundaries
-- **`concurrent_backends` scenario** — spawns multiple background workers that simultaneously invoke the target function to stress shared data structures and LWLock usage
 - **`dsm_lifecycle_check` scenario** — runs the target function inside a DSM segment allocation/deallocation cycle and verifies correct attach/detach behavior
 
 ## Known limitations

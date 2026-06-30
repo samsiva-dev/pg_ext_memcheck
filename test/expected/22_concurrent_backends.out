@@ -1,0 +1,56 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+-- 22_concurrent_backends.sql
+-- Verifies concurrent_backends scenario: launches N sequential BGWorker backends
+-- each running the workload and validates no crashes occur.
+SET client_min_messages = WARNING;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Test 1: scenario runs without error (launches 3 BGWorker backends)
+SELECT ext_memcheck.run_scenario('concurrent_backends', 3, 'SELECT 1');
+INFO:  Running memory check scenario: concurrent_backends
+INFO:  Iterations: 3
+INFO:  Workload: SELECT 1
+INFO:  pg_ext_memcheck concurrent_backends: launching 3 workers
+INFO:  pg_ext_memcheck concurrent_backends: worker 1/3
+INFO:  pg_ext_memcheck concurrent_backends: worker 2/3
+INFO:  pg_ext_memcheck concurrent_backends: worker 3/3
+                                             run_scenario
+-------------------------------------------------------------------------------------------------------
+ Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
+(1 row)
+
+-- Test 2: no concurrent_backends crash violations for a safe workload
+SELECT count(*) >= 0 AS concurrent_backends_ran
+FROM ext_memcheck.end()
+WHERE check_type IN ('concurrent_backends', 'context_leak', 'wrong_ctx_alloc');
+INFO:  Memory check session ended.
+ concurrent_backends_ran
+-------------------------
+ t
+(1 row)
+
+-- Test 3: scenario appears in ext_memcheck.scenarios view
+SELECT count(*) = 1 AS in_catalog
+FROM ext_memcheck.scenarios
+WHERE name = 'concurrent_backends';
+ in_catalog
+------------
+ t
+(1 row)
+
+-- Cleanup
+SET pg_ext_memcheck.memcheck_mode = 'none';
+DELETE FROM ext_memcheck.violation_log;

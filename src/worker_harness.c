@@ -41,6 +41,7 @@ int worker_harness_tranche_id = 0;
 /* Helpers */
 static void run_use_after_reset_in_worker(void);
 static void run_oom_simulation_in_worker(void);
+static void run_workload_in_worker(const char *workload);
 
 /*
  * run_use_after_reset_in_worker -- simulates a use-after-reset crash.
@@ -84,6 +85,23 @@ run_oom_simulation_in_worker(void)
 
     elog(FATAL, "pg_ext_memcheck worker: oom_simulation confirmed after %d MB allocated",
          num_allocations);
+}
+
+/*
+ * run_workload_in_worker -- executes an arbitrary SQL workload in the BGWorker.
+ *
+ * Used by the concurrent_backends scenario to spawn N sequential workers each
+ * running the target workload, stress-testing extension shared-memory access
+ * across multiple backends.  Clean exit (exit_code=0) is set by the caller in
+ * bgworker_harness_main.
+ */
+static void
+run_workload_in_worker(const char *workload)
+{
+    int ret;
+    ret = SPI_execute(workload, true, 0);
+    if (ret < 0)
+        elog(ERROR, "pg_ext_memcheck worker: SPI_execute failed with code %d", ret);
 }
 
 /*
@@ -141,6 +159,8 @@ bgworker_harness_main(Datum main_arg)
             run_use_after_reset_in_worker();
         } else if (strcmp(scenario, "oom_simulation") == 0) {
             run_oom_simulation_in_worker();
+        } else if (strcmp(scenario, "run_workload") == 0) {
+            run_workload_in_worker(local_worker_slot->workload);
         } else {
             elog(ERROR, "pg_ext_memcheck worker: unknown scenario '%s'", scenario);
         }
@@ -244,6 +264,77 @@ launch_crash_isolation_worker(const char *scenario)
                           "crash-isolation worker exited with non-zero status: confirmed crash",
                           "(worker_harness)");
     }
+
+    worker_slot->status = WORKER_STATUS_IDLE;
+    LWLockRelease(&worker_slot->lock);
+}
+
+/*
+ * launch_workload_worker -- Launch a BGWorker that runs a single SQL workload.
+ *
+ * Used by concurrent_backends: the caller invokes this N times sequentially,
+ * each time in a fresh BGWorker so shmem access paths are exercised across
+ * multiple backend processes.  Any crash (SIGSEGV, ERROR) is caught and logged
+ * as a violation.
+ */
+void
+launch_workload_worker(const char *workload)
+{
+    BackgroundWorker worker;
+    BackgroundWorkerHandle *handle;
+    BgwHandleStatus status;
+
+    if (!worker_slot)
+        elog(ERROR, "pg_ext_memcheck worker harness not initialized");
+
+    LWLockAcquire(&worker_slot->lock, LW_EXCLUSIVE);
+
+    if (worker_slot->status != WORKER_STATUS_IDLE) {
+        LWLockRelease(&worker_slot->lock);
+        elog(ERROR, "pg_ext_memcheck worker harness is busy (status=%d)",
+             worker_slot->status);
+    }
+
+    strlcpy(worker_slot->scenario, "run_workload", sizeof(worker_slot->scenario));
+    strlcpy(worker_slot->database, get_database_name(MyDatabaseId), sizeof(worker_slot->database));
+    strlcpy(worker_slot->workload, workload, sizeof(worker_slot->workload));
+    worker_slot->requestor_pid = MyProcPid;
+    worker_slot->exit_code = 1;
+    worker_slot->status = WORKER_STATUS_RUNNING;
+
+    LWLockRelease(&worker_slot->lock);
+
+    memset(&worker, 0, sizeof(BackgroundWorker));
+    snprintf(worker.bgw_name, BGW_MAXLEN, "pg_ext_memcheck workload worker");
+    snprintf(worker.bgw_type, BGW_MAXLEN, "pg_ext_memcheck worker");
+    worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+    worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+    worker.bgw_restart_time = BGW_NEVER_RESTART;
+    worker.bgw_main_arg = (Datum) 0;
+    snprintf(worker.bgw_function_name, BGW_MAXLEN, "bgworker_harness_main");
+    snprintf(worker.bgw_library_name, BGW_MAXLEN, "pg_ext_memcheck");
+
+    if (!RegisterDynamicBackgroundWorker(&worker, &handle)) {
+        LWLockAcquire(&worker_slot->lock, LW_EXCLUSIVE);
+        worker_slot->status = WORKER_STATUS_IDLE;
+        LWLockRelease(&worker_slot->lock);
+        elog(ERROR, "pg_ext_memcheck: failed to register BGWorker for workload");
+    }
+
+    status = WaitForBackgroundWorkerShutdown(handle);
+
+    LWLockAcquire(&worker_slot->lock, LW_EXCLUSIVE);
+
+    if (status == BGWH_POSTMASTER_DIED) {
+        worker_slot->status = WORKER_STATUS_IDLE;
+        LWLockRelease(&worker_slot->lock);
+        elog(ERROR, "pg_ext_memcheck worker: postmaster died");
+    }
+
+    if (worker_slot->exit_code != 0)
+        violation_log_write("concurrent_backends", "ERROR",
+                            "workload worker exited with non-zero status: crash or error during concurrent access",
+                            "(worker_harness)");
 
     worker_slot->status = WORKER_STATUS_IDLE;
     LWLockRelease(&worker_slot->lock);

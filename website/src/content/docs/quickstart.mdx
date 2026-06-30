@@ -127,7 +127,7 @@ SELECT ext_memcheck.flush_violations();
 ```
 
 <Aside type="note" title="Available scenarios">
-  Six scenarios are available: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, and `wrong_context_probe` run in-process. `use_after_reset` and `oom_simulation` run in a crash-isolated BGWorker process. Additional scenarios (`context_reset_storm`, `concurrent_backends`, `dsm_lifecycle_check`) are deferred to a later release. See the [Stress Scenarios](/scenarios/) page for details.
+  Ten scenarios are available. In-process: `growth_benchmark`, `tx_abort_loop`, `shmem_sentinel_probe`, `wrong_context_probe`, `context_reset_storm`, `cursor_leak`, `cold_warm_cold`. BGWorker (crash-isolated): `use_after_reset`, `oom_simulation`, `concurrent_backends`. See the [Stress Scenarios](/scenarios/) page for full details.
 </Aside>
 
 ## GUC parameters

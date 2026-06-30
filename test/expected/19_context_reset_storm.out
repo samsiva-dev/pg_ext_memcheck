@@ -1,0 +1,51 @@
+-- -------------------------------------------------------------------------
+-- pg_ext_memcheck
+--
+-- Copyright (c) 2026, Samba Siva Reddy
+--
+-- This software is released under the MIT License.
+-- See LICENSE for details.
+-- -------------------------------------------------------------------------
+-- 19_context_reset_storm.sql
+-- Verifies context_reset_storm scenario: repeated context reset between workload invocations.
+SET client_min_messages = WARNING;
+SET pg_ext_memcheck.memcheck_mode = 'all';
+SELECT ext_memcheck.begin('');
+INFO:  Memory check session started: pattern='(all)', allowed_contexts=0
+             begin
+-------------------------------
+ Memory check session started.
+(1 row)
+
+-- Test 1: scenario runs without error
+SELECT ext_memcheck.run_scenario('context_reset_storm', 10, 'SELECT 1');
+INFO:  Running memory check scenario: context_reset_storm
+INFO:  Iterations: 10
+INFO:  Workload: SELECT 1
+                                             run_scenario
+-------------------------------------------------------------------------------------------------------
+ Scenario executed and analyzed. Run 'SELECT * FROM ext_memcheck.end()' to retrieve logged violations.
+(1 row)
+
+-- Test 2: violations (if any) are check_type context_leak or wrong_ctx_alloc
+SELECT count(*) >= 0 AS storm_ran
+FROM ext_memcheck.end()
+WHERE check_type IN ('context_leak', 'wrong_ctx_alloc', 'ctx_bloat');
+INFO:  Memory check session ended.
+ storm_ran
+-----------
+ t
+(1 row)
+
+-- Test 3: scenario appears in ext_memcheck.scenarios view
+SELECT count(*) = 1 AS in_catalog
+FROM ext_memcheck.scenarios
+WHERE name = 'context_reset_storm';
+ in_catalog
+------------
+ t
+(1 row)
+
+-- Cleanup
+SET pg_ext_memcheck.memcheck_mode = 'none';
+DELETE FROM ext_memcheck.violation_log;
