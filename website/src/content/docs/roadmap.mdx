@@ -29,6 +29,8 @@ Phase 2 adds probes that require process isolation. Several items are already co
 
 - **`wrong_context_probe` scenario** ✓ — focused wrong-context allocation check; runs only `check_wrong_context_alloc` detection without the `context_leak` diff, giving a clean isolated signal across N controlled repetitions
 - **BGWorker crash harness** ✓ — `use_after_reset` and `oom_simulation` scenarios run in an isolated background worker; crash is confirmed via BGWorker exit code, not by propagating SIGSEGV to the test session
+- **`tx_abort_loop` scenario** ✓ — wraps each workload invocation in a savepoint and rolls back, then compares memory context snapshots across the full loop to expose resources that only accumulate on abort and are never cleaned up on rollback
+- **`shmem_sentinel_probe` scenario** ✓ — plants `0xDE` sentinel bytes just past each registered shared memory segment boundary, runs the workload, then verifies all sentinels are intact; a corrupted sentinel means the extension wrote past its declared shmem boundary
 - **`context_reset_storm` scenario** ✓ — allocates 100 × 64 B into a scratch context, calls `MemoryContextReset()`, then runs the workload; catches extensions that hold stale pointers across context resets (Bug 3)
 - **`cursor_leak` scenario** ✓ — opens up to 32 SPI cursors without closing them while running the workload; portal-context accumulation surfaces as `context_leak` violations (Bug 1)
 - **`cold_warm_cold` scenario** ✓ — cold phase → 1-second `pg_sleep` → warm phase; detects `CacheMemoryContext` growth that persists across idle boundaries (Bug 6)
